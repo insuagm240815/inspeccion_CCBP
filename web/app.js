@@ -117,10 +117,46 @@ function centrar(x, y, w) {
 const irA = i => centrar(LOTS[i].c[0], LOTS[i].c[1]);
 const ptrs = new Map(); let moved = 0, downT = null, pinch0 = 0;
 svg.addEventListener('pointerdown', e => {
+  ocultarTip();
   svg.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, {x: e.clientX, y: e.clientY});
   if (ptrs.size === 1) { moved = 0; downT = e.target; }
   if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); moved = 99; }
 });
+/* cartel al pasar el mouse: número de lote y faltas */
+const tip = $('tip'), wrap = svg.parentElement;
+let tipI = -1;
+function textoTip(i) {
+  const ufs = LOTS[i].n, t = hoy();
+  const hs = Object.values(S.hallazgos).filter(h => ufs.indexOf(h.uf) >= 0);
+  const ab = hs.filter(abierta), venc = ab.filter(h => h.revision && h.revision <= t).length;
+  let linea = '';
+  if (ab.length) {
+    linea = `<span class="tip-n">${ab.length} ${ab.length === 1 ? 'falta abierta' : 'faltas abiertas'}</span>` +
+      (venc ? `<span class="tip-v">${venc} para revisar hoy o vencida${venc === 1 ? '' : 's'}</span>` : '');
+  } else if (hs.length) {
+    linea = `<span class="tip-s">${hs.length} ${hs.length === 1 ? 'falta cerrada' : 'faltas cerradas'}</span>`;
+  } else {
+    linea = '<span class="tip-s">Sin faltas</span>';
+  }
+  return `<b>U.F. ${esc(ufs.join(' / '))}</b><span class="tip-s">Sector ${esc(sectorDe(ufs[0]))}</span>${linea}`;
+}
+function moverTip(e) {
+  const r = wrap.getBoundingClientRect();
+  let x = e.clientX - r.left + 14, y = e.clientY - r.top + 16;
+  if (x + tip.offsetWidth > r.width - 8) x = e.clientX - r.left - tip.offsetWidth - 14;
+  if (y + tip.offsetHeight > r.height - 8) y = e.clientY - r.top - tip.offsetHeight - 12;
+  tip.style.transform = `translate(${Math.max(4, x)}px, ${Math.max(4, y)}px)`;
+}
+function ocultarTip() { tip.hidden = true; tipI = -1; }
+svg.addEventListener('pointerleave', ocultarTip);
+svg.addEventListener('pointermove', e => {
+  if (e.pointerType !== 'mouse' || ptrs.size) { if (!tip.hidden) ocultarTip(); return; }
+  const i = e.target.dataset && e.target.dataset.i != null ? +e.target.dataset.i : -1;
+  if (i < 0) { if (!tip.hidden) ocultarTip(); return; }
+  if (i !== tipI) { tipI = i; tip.innerHTML = textoTip(i); tip.hidden = false; }
+  moverTip(e);
+});
+
 svg.addEventListener('pointermove', e => {
   if (!ptrs.has(e.pointerId)) return;
   const prev = ptrs.get(e.pointerId), cur = {x: e.clientX, y: e.clientY};
@@ -234,6 +270,7 @@ function render() {
     const n = Object.values(S.hallazgos).filter(h => abierta(h) && h.revision && h.revision <= hoy()).length;
     $('nAgenda').hidden = !n; $('nAgenda').textContent = n;
     if (SEL >= 0) pintarPanel();
+    if (tipI >= 0) tip.innerHTML = textoTip(tipI);   // datos nuevos mientras el mouse está encima
   });
 }
 
