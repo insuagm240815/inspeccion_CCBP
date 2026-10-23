@@ -1,0 +1,70 @@
+# Inspección CCBP — despliegue en una VM (Debian 12 + Docker) dentro de Proxmox.
+# Uso:  cp .env.example .env  (completar claves)  →  docker compose up -d
+# Con Cloudflare Tunnel:  docker compose --profile tunel up -d
+
+services:
+  db:
+    image: mariadb:11.4.4
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Falta DB_ROOT_PASSWORD en .env}
+      DB_APP_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD en .env}
+      TZ: America/Argentina/Buenos_Aires
+    volumes:
+      - db_datos:/var/lib/mysql
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    networks: [interna]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      retries: 10
+
+  api:
+    build: ./api
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+    environment:
+      DB_HOST: db
+      DB_USER: inspeccion
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: inspeccion_ccbp
+      FOTOS_DIR: /data/fotos
+      COOKIE_SECURE: "1"
+      SESION_HORAS: ${SESION_HORAS:-12}
+      TZ: America/Argentina/Buenos_Aires
+    volumes:
+      - ${FOTOS_HOST_DIR:-./datos/fotos}:/data/fotos
+    networks: [interna]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+
+  web:
+    image: nginx:1.27.3-alpine
+    restart: unless-stopped
+    depends_on: [api]
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/headers.inc:/etc/nginx/conf.d/headers.inc:ro
+    ports:
+      # Solo escucha en la VM. La publicación hacia afuera la hace el túnel o el FortiGate.
+      - "${WEB_BIND:-127.0.0.1}:8080:80"
+    networks: [interna]
+
+  tunel:
+    image: cloudflare/cloudflared:2024.12.2
+    profiles: [tunel]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on: [web]
+    networks: [interna]
+
+networks:
+  interna: {}
+
+volumes:
+  db_datos: {}

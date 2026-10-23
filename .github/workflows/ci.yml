@@ -1,0 +1,63 @@
+name: Pruebas
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-24.04
+    services:
+      db:
+        image: mariadb:11.4.4
+        env:
+          MARIADB_ROOT_PASSWORD: root-ci
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-retries=20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_USER: inspeccion
+      DB_PASSWORD: app-ci
+      DB_NAME: inspeccion_ccbp
+      FOTOS_DIR: /tmp/fotos
+      COOKIE_SECURE: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cargar esquema y datos base
+        run: |
+          for f in db/init/*.sql; do mysql -h127.0.0.1 -uroot -proot-ci < "$f"; done
+          mysql -h127.0.0.1 -uroot -proot-ci -e "CREATE USER 'inspeccion'@'%' IDENTIFIED BY 'app-ci'; GRANT SELECT,INSERT,UPDATE,DELETE ON inspeccion_ccbp.* TO 'inspeccion'@'%';"
+      - name: Instalar dependencias
+        run: pip install -r api/requirements.txt -r api/requirements-dev.txt
+      - name: Pruebas de la API
+        working-directory: api
+        run: mkdir -p /tmp/fotos && pytest -q
+
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Sintaxis del frontend
+        run: node --check web/app.js && node --check web/plano.js
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagen de la API
+        run: docker build -t inspeccion-api ./api
+      - name: Validar docker compose
+        run: |
+          printf 'DB_ROOT_PASSWORD=x\nDB_PASSWORD=y\n' > .env
+          docker compose config --quiet

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F6F5C">
+<title>Inspección CCBP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="app.css">
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand"><b>Inspección CCBP</b><span><i class="live" id="live"></i><em id="liveT" style="font-style:normal">Sin conexión</em></span></div>
+    <form class="search" id="fsearch">
+      <input id="ufq" type="number" inputmode="numeric" min="1" max="2955" placeholder="U.F." aria-label="Buscar U.F.">
+      <button type="submit">Ir</button>
+    </form>
+    <button type="button" id="bAgenda">Agenda<span class="badge" id="nAgenda" hidden>0</span></button>
+    <button type="button" id="bCat">Catálogo</button>
+    <div class="user"><span id="uName"></span><button type="button" id="bSalir">Salir</button></div>
+  </header>
+  <nav class="chips" aria-label="Filtros">
+    <button class="chip" data-sec="" aria-pressed="true">Todos</button>
+    <button class="chip" data-sec="I" aria-pressed="false">I</button>
+    <button class="chip" data-sec="II" aria-pressed="false">II</button>
+    <button class="chip" data-sec="III" aria-pressed="false">III</button>
+    <button class="chip" data-sec="IV" aria-pressed="false">IV</button>
+    <button class="chip" data-sec="V" aria-pressed="false">V</button>
+    <button class="chip" data-sec="Golf" aria-pressed="false">Golf</button>
+    <span class="sep"></span>
+    <button class="chip" data-vis="venc" aria-pressed="false">Hoy y vencidas</button>
+    <button class="chip" data-vis="visto" aria-pressed="false">Visto hoy</button>
+    <button class="chip" data-vis="repro" aria-pressed="false">Reprogramadas hoy</button>
+    <button class="chip" data-vis="abiertas" aria-pressed="false">Con faltas abiertas</button>
+  </nav>
+  <main>
+    <div class="mapwrap">
+      <svg id="map" viewBox="80 0 3860 3330" preserveAspectRatio="xMidYMid meet" aria-label="Plano de lotes del country"></svg>
+      <div class="banner" id="banner" hidden></div>
+      <div class="legend" aria-label="Referencias">
+        <span><i style="background:var(--st-venc)"></i>Revisión vencida</span>
+        <span><i style="background:var(--st-hoy)"></i>Revisión hoy</span>
+        <span><i style="background:var(--st-abierta)"></i>Falta abierta</span>
+        <span><i style="background:var(--st-cerrada)"></i>Faltas cerradas</span>
+        <span><i style="background:var(--st-visit)"></i>Visitada sin faltas</span>
+      </div>
+      <div class="mapctl">
+        <button type="button" id="bGps" aria-label="Mostrar mi ubicación" title="Mi ubicación">◎</button>
+        <button type="button" id="zIn" aria-label="Acercar">+</button>
+        <button type="button" id="zOut" aria-label="Alejar">−</button>
+        <button type="button" id="zAll" aria-label="Ver todo el plano">⤢</button>
+      </div>
+    </div>
+    <aside class="panel" id="panel" hidden></aside>
+  </main>
+</div>
+<div class="login" id="login" hidden>
+  <form id="flogin" autocomplete="on">
+    <h1>Inspección CCBP</h1>
+    <p>Ingresá con el usuario que te dio el área de Sistemas.</p>
+    <div class="f"><label for="lu">Usuario</label><input id="lu" name="username" autocomplete="username" required></div>
+    <div class="f"><label for="lc">Clave</label><input id="lc" name="password" type="password" autocomplete="current-password" required></div>
+    <div class="err" id="lerr" role="alert"></div>
+    <button type="submit" class="pri">Ingresar</button>
+  </form>
+</div>
+<div class="modal" id="modal" hidden></div>
+<div class="busy" id="busy" hidden><div id="busyT">Guardando…</div></div>
+<div class="toast" id="toast" hidden></div>
+<script src="plano.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
