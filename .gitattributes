@@ -1,0 +1,5 @@
+# Fin de línea LF en el repositorio y en la copia de trabajo: los scripts .sh y la configuración
+# corren en Linux (VM y contenedores) y se rompen con CRLF.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
