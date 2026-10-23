@@ -1,0 +1,13 @@
+{
+  "name": "Inspección CCBP — entorno de prueba",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "hostRequirements": { "cpus": 2, "memory": "4gb" },
+  "postStartCommand": "bash scripts/codespace-inicio.sh",
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": { "label": "Inspección CCBP", "onAutoForward": "openBrowser" }
+  }
+}

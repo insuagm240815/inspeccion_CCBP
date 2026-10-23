@@ -61,3 +61,27 @@ jobs:
         run: |
           printf 'DB_ROOT_PASSWORD=x\nDB_PASSWORD=y\n' > .env
           docker compose config --quiet
+
+  compose:
+    # Levanta el stack completo como en producción (MariaDB + API + nginx) y prueba el circuito por HTTP.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Levantar
+        run: |
+          printf 'DB_ROOT_PASSWORD=root-ci-123456\nDB_PASSWORD=app-ci-123456\nWEB_BIND=127.0.0.1\n' > .env
+          mkdir -p datos/fotos && chmod 777 datos/fotos
+          docker compose up -d --build
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8080/api/salud && break; sleep 3; done
+          curl -fs http://127.0.0.1:8080/api/salud
+      - name: Probar login, lectura y cabeceras de seguridad
+        run: |
+          docker compose exec -T -e CLAVE_NUEVA=clave-ci-123456 api python -m app.usuarios crear --usuario ci --nombre "CI" --rol inspector
+          curl -fs -c c.txt -H 'X-CCBP: 1' -H 'Content-Type: application/json' -d '{"usuario":"ci","clave":"clave-ci-123456"}' http://127.0.0.1:8080/api/login
+          curl -fs -b c.txt http://127.0.0.1:8080/api/estado | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d['catalogo'])==6; print('estado ok')"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/estado)" = 401
+          curl -sI http://127.0.0.1:8080/ | grep -qi 'content-security-policy'
+          echo "todo ok"
+      - name: Logs si falla
+        if: failure()
+        run: docker compose logs --tail=100

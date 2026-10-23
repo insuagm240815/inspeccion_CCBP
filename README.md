@@ -127,6 +127,19 @@ pip install -r requirements.txt -r requirements-dev.txt
 DB_HOST=127.0.0.1 DB_USER=inspeccion DB_PASSWORD=... FOTOS_DIR=/tmp/fotos COOKIE_SECURE=0 pytest -q
 ```
 
+## Probar en línea con GitHub Codespaces
+
+Levanta la app completa (MariaDB + API + nginx) en una máquina de GitHub, con dirección HTTPS propia. Usar **solo con datos de prueba**.
+
+1. En el repo: *Code → Codespaces → Create codespace on main*.
+2. Esperar 3 a 5 minutos. El script `scripts/codespace-inicio.sh` arma todo, crea los usuarios `inspector`, `supervisor` y `admin`, y muestra la clave en la terminal. Se puede volver a ver con `cat datos/.usuarios-demo`.
+3. En la pestaña **PORTS**, abrir el puerto 8080 (ícono del globo).
+   - Visibilidad *Private* (por defecto): solo entra quien inicie sesión con tu cuenta de GitHub.
+   - Para que lo prueben otros desde el celular: clic derecho → *Port visibility → Public*. La app igual pide usuario y clave.
+4. El GPS funciona porque la dirección es HTTPS.
+
+El Codespace se apaga solo tras 30 minutos sin uso. Al volver a abrirlo, los datos siguen ahí. Si se borra el Codespace, se pierden los datos de prueba.
+
 ## Pendiente (próximas etapas)
 
 - Observaciones preventivas, marcas en áreas comunes, urgencias y regularización. El modelo ya está en el DER.

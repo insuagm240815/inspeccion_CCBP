@@ -7,6 +7,7 @@
 """
 import argparse
 import getpass
+import os
 import sys
 
 from .db import conexion, ejecutar, fila, filas
@@ -14,6 +15,9 @@ from .seguridad import hash_clave
 
 
 def _pedir_clave():
+    # Para automatizar (Codespaces, pruebas): la clave puede venir en la variable CLAVE_NUEVA.
+    if os.environ.get("CLAVE_NUEVA"):
+        return hash_clave(os.environ["CLAVE_NUEVA"])
     a = getpass.getpass("Clave (mínimo 10 caracteres): ")
     b = getpass.getpass("Repetila: ")
     if a != b:
