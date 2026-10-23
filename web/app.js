@@ -47,14 +47,16 @@ async function api(ruta, {method = 'GET', json, form} = {}) {
 let tT = 0;
 function toast(m, err) { const t = $('toast'); t.textContent = m; t.className = 'toast' + (err ? ' err' : ''); t.hidden = false; clearTimeout(tT); tT = setTimeout(() => { t.hidden = true; }, err ? 6000 : 2600); }
 function busy(m) { $('busyT').textContent = m || 'Guardando…'; $('busy').hidden = !m; }
-function cerrarModal() { $('modal').hidden = true; $('modal').innerHTML = ''; }
+function cerrarModal() { $('modal').hidden = true; $('modal').innerHTML = ''; limpiarFotos(); }
 function modal(titulo, cuerpo, pie) {
   const m = $('modal');
+  limpiarFotos();
   m.innerHTML = `<div class="dlg" role="dialog" aria-modal="true" aria-label="${esc(titulo)}"><div class="dlg-h"><h2>${esc(titulo)}</h2><button type="button" class="x" data-close aria-label="Cerrar">×</button></div><div class="dlg-b">${cuerpo}</div>${pie ? `<div class="dlg-f">${pie}</div>` : ''}</div>`;
   m.hidden = false;
   m.querySelectorAll('[data-close]').forEach(b => { b.onclick = cerrarModal; });
   m.onclick = e => { if (e.target === m) cerrarModal(); };
   m.querySelectorAll('img[data-foto]').forEach(ocultarRota);
+  iniciarFotos(m);
   return m;
 }
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('modal').hidden) cerrarModal(); });
@@ -329,8 +331,38 @@ async function comprimir(file) {
   } catch (e) { /* se manda el original; el servidor lo procesa igual */ }
   return file;
 }
-const campoFotos = id => `<div class="f"><label for="${id}">Fotos</label><input id="${id}" type="file" accept="image/*" capture="environment" multiple></div>`;
-const archivos = id => { const i = $(id); return i && i.files ? [...i.files] : []; };
+/* Fotos: en el celular, "Sacar foto" abre la cámara directamente (capture). Cada toma se suma a la lista
+   con su miniatura, así se pueden sacar varias seguidas sin pasar por la galería. */
+const TACTIL = window.matchMedia('(pointer: coarse)').matches;
+const FOTOS = {};
+const campoFotos = id => `<div class="f fotos" data-fotos="${id}"><span class="flabel">Fotos</span>
+  <div class="prev" id="${id}-prev"></div>
+  <div class="row">
+    ${TACTIL ? `<button type="button" class="pri cam" data-cam="${id}">📷 Sacar foto</button><button type="button" data-gal="${id}">Galería</button>`
+             : `<button type="button" data-gal="${id}">Agregar fotos</button>`}
+  </div>
+  <input type="file" accept="image/*" capture="environment" id="${id}-cam" hidden>
+  <input type="file" accept="image/*" multiple id="${id}-gal" hidden></div>`;
+const archivos = id => (FOTOS[id] || []).map(x => x.file);
+function pintarFotos(id) {
+  const box = $(id + '-prev'); if (!box) return;
+  box.innerHTML = (FOTOS[id] || []).map((x, k) => `<figure><img src="${x.url}" alt="Foto ${k + 1}"><button type="button" class="quitar" data-q="${k}" aria-label="Quitar foto ${k + 1}">×</button></figure>`).join('');
+  box.querySelectorAll('[data-q]').forEach(b => { b.onclick = () => { const x = FOTOS[id].splice(+b.dataset.q, 1)[0]; URL.revokeObjectURL(x.url); pintarFotos(id); }; });
+}
+function iniciarFotos(root) {
+  root.querySelectorAll('[data-fotos]').forEach(w => {
+    const id = w.dataset.fotos;
+    if (w.dataset.listo) return; w.dataset.listo = '1';
+    FOTOS[id] = FOTOS[id] || [];
+    const sumar = inp => { [...inp.files].forEach(f => FOTOS[id].push({file: f, url: URL.createObjectURL(f)})); inp.value = ''; pintarFotos(id); };
+    $(id + '-cam').onchange = e => sumar(e.target);
+    $(id + '-gal').onchange = e => sumar(e.target);
+    w.querySelectorAll('[data-cam]').forEach(b => { b.onclick = () => $(id + '-cam').click(); });
+    w.querySelectorAll('[data-gal]').forEach(b => { b.onclick = () => $(id + '-gal').click(); });
+    pintarFotos(id);
+  });
+}
+function limpiarFotos() { Object.keys(FOTOS).forEach(id => { FOTOS[id].forEach(x => URL.revokeObjectURL(x.url)); delete FOTOS[id]; }); }
 async function agregarFotos(fd, grupo, files) { for (const f of files) fd.append('f_' + grupo, await comprimir(f), 'foto.jpg'); }
 
 /* ───────── nueva visita ───────── */
@@ -366,6 +398,7 @@ function formVisita(uf) {
   `, '<button type="button" data-close>Cancelar</button><button type="button" class="pri" id="vOk">Guardar visita</button>');
   if ($('addF')) $('addF').onclick = () => {
     $('faltas').insertAdjacentHTML('beforeend', bloqueFalta());
+    iniciarFotos($('faltas'));
     $('faltas').querySelectorAll('[data-quitar]').forEach(b => { b.onclick = () => b.closest('[data-fb]').remove(); });
   };
   $('vOk').onclick = async () => {
