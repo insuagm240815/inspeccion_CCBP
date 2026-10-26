@@ -1,4 +1,5 @@
 -- Catálogo de EJEMPLO (códigos EJ-). Reemplazar importando el catálogo real desde la app (Catálogo → Pegar desde la planilla).
+SET NAMES utf8mb4;
 USE inspeccion_ccbp;
 INSERT INTO rubro (nombre) VALUES ('Residuales'),('Forestación y poda'),('Cercos y frente'),('Obra');
 INSERT INTO catalogo_falta (codigo,id_rubro,falta,norma) VALUES

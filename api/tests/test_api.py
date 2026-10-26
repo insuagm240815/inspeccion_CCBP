@@ -216,3 +216,27 @@ def test_abm_catalogo(usuarios):
     acciones = {x["accion"] for x in h if x["codigo"] in (cod, cod2)}
     assert {"alta", "modificación", "baja", "eliminado"} <= acciones
     assert ins.get("/api/catalogo/historial").status_code == 403
+
+
+def test_reportes(usuarios):
+    import json
+    ins, con = cliente(usuarios["inspector"]), cliente(usuarios["consulta"])
+    with conexion() as cx:
+        hoy = str(fila(cx, "SELECT CURDATE() d")["d"])
+    r = ins.post("/api/visitas", data={"datos": json.dumps({"uf": 2900, "fecha": hoy,
+                 "faltas": [{"codigo": "EJ-02", "revision": "2000-01-01"}, {"codigo": "EJ-03", "estado": "Resuelto"}]})}, headers=H)
+    assert r.status_code == 200, r.text
+    assert TestClient(app).get("/api/reportes").status_code == 401
+    for c in (ins, con):                                             # inspector y consulta tienen acceso
+        d = c.get("/api/reportes", params={"sector": "Golf"})
+        assert d.status_code == 200, d.text
+        d = d.json()
+        assert d["resumen"]["detectadas"] >= 2 and d["resumen"]["vencidas"] >= 1 and d["resumen"]["cerradas"] >= 1
+        assert {"Sector Golf"} == {x["etiqueta"] for x in d["por_sector"]}
+        assert any(x["uf"] == 2900 for x in d["listado"])
+    v = con.get("/api/reportes", params={"sector": "Golf", "estado": "vencidas"}).json()
+    assert all(x["estado"] not in ("Resuelto", "Verificado sin falta") for x in v["listado"])
+    assert con.get("/api/reportes", params={"desde": "2026-12-01", "hasta": "2026-01-01"}).status_code == 400
+    csv = con.get("/api/reportes.csv", params={"sector": "Golf"})
+    assert csv.status_code == 200 and csv.headers["content-type"].startswith("text/csv")
+    assert csv.text.startswith("﻿N° falta;") and ";2900;" in csv.text

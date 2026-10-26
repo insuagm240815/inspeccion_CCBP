@@ -1,0 +1,91 @@
+name: Pruebas
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-24.04
+    services:
+      db:
+        image: mariadb:11.4.4
+        env:
+          MARIADB_ROOT_PASSWORD: root-ci
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-retries=20
+    env:
+      DB_HOST: 127.0.0.1
+      DB_USER: inspeccion
+      DB_PASSWORD: app-ci
+      DB_NAME: inspeccion_ccbp
+      FOTOS_DIR: /tmp/fotos
+      COOKIE_SECURE: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cargar esquema y datos base
+        run: |
+          for f in db/init/*.sql; do mysql -h127.0.0.1 -uroot -proot-ci < "$f"; done
+          mysql -h127.0.0.1 -uroot -proot-ci -e "CREATE USER 'inspeccion'@'%' IDENTIFIED BY 'app-ci'; GRANT SELECT,INSERT,UPDATE,DELETE ON inspeccion_ccbp.* TO 'inspeccion'@'%';"
+      - name: Instalar dependencias
+        run: pip install -r api/requirements.txt -r api/requirements-dev.txt
+      - name: Pruebas de la API
+        working-directory: api
+        run: mkdir -p /tmp/fotos && pytest -q
+
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Sintaxis del frontend
+        run: node --check web/app.js && node --check web/plano.js
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagen de la API
+        run: docker build -t inspeccion-api ./api
+      - name: Construir imágenes de Railway
+        run: |
+          docker build -f Dockerfile.railway -t inspeccion-railway .
+          docker build -t inspeccion-db ./db
+      - name: Validar docker compose
+        run: |
+          printf 'DB_ROOT_PASSWORD=x\nDB_PASSWORD=y\n' > .env
+          docker compose config --quiet
+
+  compose:
+    # Levanta el stack completo como en producción (MariaDB + API + nginx) y prueba el circuito por HTTP.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Levantar
+        run: |
+          printf 'DB_ROOT_PASSWORD=root-ci-123456\nDB_PASSWORD=app-ci-123456\nWEB_BIND=127.0.0.1\n' > .env
+          mkdir -p datos/fotos && chmod 777 datos/fotos
+          docker compose up -d --build
+          for i in $(seq 1 60); do curl -fs http://127.0.0.1:8080/api/salud && break; sleep 3; done
+          curl -fs http://127.0.0.1:8080/api/salud
+      - name: Probar login, lectura y cabeceras de seguridad
+        run: |
+          docker compose exec -T -e CLAVE_NUEVA=clave-ci-123456 api python -m app.usuarios crear --usuario ci --nombre "CI" --rol inspector
+          curl -fs -c c.txt -H 'X-CCBP: 1' -H 'Content-Type: application/json' -d '{"usuario":"ci","clave":"clave-ci-123456"}' http://127.0.0.1:8080/api/login
+          curl -fs -b c.txt http://127.0.0.1:8080/api/estado | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d['catalogo'])==6; print('estado ok')"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/estado)" = 401
+          curl -sI http://127.0.0.1:8080/ | grep -qi 'content-security-policy'
+          echo "todo ok"
+      - name: Logs si falla
+        if: failure()
+        run: docker compose logs --tail=100

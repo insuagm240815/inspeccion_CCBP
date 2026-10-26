@@ -3,17 +3,24 @@ import asyncio
 import re
 import datetime as dt
 import json
+import os
 import threading
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, StreamingResponse
 
+from . import arranque
 from . import fotos as F
 from .db import conexion, ejecutar, fila, filas, hoy, siguiente
 from .seguridad import COOKIE, COOKIE_SECURE, SESION_HORAS, exigir, ip_de, login, logout, usuario_de
 
 app = FastAPI(title="Inspección CCBP", docs_url=None, redoc_url=None, openapi_url=None)
+
+
+@app.on_event("startup")
+def _al_arrancar():
+    arranque.iniciar()
 
 ESTADOS = ['Pendiente', 'Aviso verbal', 'Aviso por folleto', 'Derivado a Comisión',
            'Notificado/Intimado', 'En proceso de resolución', 'Resuelto', 'Verificado sin falta']
@@ -513,3 +520,127 @@ def api_cat_historial(req: Request):
     with conexion() as c:
         return filas(c, """SELECT l.fecha, l.codigo, l.accion, l.detalle, u.nombre usuario FROM catalogo_log l
                            JOIN usuario u ON u.id_usuario=l.id_usuario ORDER BY l.id DESC LIMIT 200""")
+
+
+# ───────── Reportes (consulta, inspector y superiores) ─────────
+def _filtros_reporte(req: Request):
+    q = req.query_params
+    hasta = _fecha(q.get("hasta"), "fecha hasta", True) or hoy()
+    desde = _fecha(q.get("desde"), "fecha desde", True) or (hasta - dt.timedelta(days=30))
+    if desde > hasta:
+        raise HTTPException(400, "La fecha desde no puede ser posterior a la fecha hasta.")
+    if (hasta - desde).days > 3660:
+        raise HTTPException(400, "El período máximo es de 10 años.")
+    cond, args = ["h.fecha BETWEEN %s AND %s"], [desde, hasta]
+    if q.get("sector"):
+        cond.append("s.nombre = %s"); args.append("Sector " + q.get("sector")[:10])
+    if q.get("rubro"):
+        cond.append("r.nombre = %s"); args.append(q.get("rubro")[:80])
+    if q.get("codigo"):
+        cond.append("h.codigo = %s"); args.append(q.get("codigo")[:10])
+    est = q.get("estado", "")
+    cerr = "('Resuelto','Verificado sin falta')"
+    if est == "abiertas":
+        cond.append(f"h.estado NOT IN {cerr}")
+    elif est == "cerradas":
+        cond.append(f"h.estado IN {cerr}")
+    elif est == "vencidas":
+        cond.append(f"h.estado NOT IN {cerr} AND h.fecha_revision < %s"); args.append(hoy())
+    elif est in ESTADOS:
+        cond.append("h.estado = %s"); args.append(est)
+    return desde, hasta, " AND ".join(cond), args
+
+
+_BASE_REPORTE = """FROM hallazgo h JOIN visita v ON v.nro_visita = h.nro_visita
+    JOIN unidad_funcional uf ON uf.nro_uf = v.nro_uf JOIN sector s ON s.id_sector = uf.id_sector
+    JOIN catalogo_falta c ON c.codigo = h.codigo JOIN rubro r ON r.id_rubro = c.id_rubro
+    JOIN usuario u ON u.id_usuario = h.id_usuario"""
+_ABIERTA = "h.estado NOT IN ('Resuelto','Verificado sin falta')"
+
+
+def _listado(c, where, args, limite):
+    return filas(c, f"""SELECT h.nro_hallazgo n, h.fecha, v.nro_uf uf, s.nombre sector, r.nombre rubro, h.codigo, c.falta,
+                        h.estado, h.fecha_revision revision, h.fecha_cierre cierre, h.reiterancia reit, u.nombre cargo,
+                        h.observacion obs {_BASE_REPORTE} WHERE {where} ORDER BY h.fecha DESC, h.nro_hallazgo DESC LIMIT {int(limite)}""", args)
+
+
+@app.get("/api/reportes")
+def api_reportes(req: Request):
+    exigir(req, "consulta")
+    desde, hasta, where, args = _filtros_reporte(req)
+    t = hoy()
+    with conexion() as c:
+        res = fila(c, f"""SELECT COUNT(*) detectadas, SUM({_ABIERTA}) abiertas, SUM(NOT ({_ABIERTA})) cerradas,
+                          SUM({_ABIERTA} AND h.fecha_revision < %s) vencidas, SUM(h.reiterancia > 0) reiteradas,
+                          COUNT(DISTINCT v.nro_uf) ufs, ROUND(AVG(CASE WHEN h.fecha_cierre IS NOT NULL
+                          THEN DATEDIFF(h.fecha_cierre, h.fecha) END), 1) dias_cierre {_BASE_REPORTE} WHERE {where}""", [t] + args)
+        vcond, vargs = ["v.fecha BETWEEN %s AND %s"], [desde, hasta]
+        if req.query_params.get("sector"):
+            vcond.append("s.nombre = %s"); vargs.append("Sector " + req.query_params["sector"][:10])
+        res["visitas"] = fila(c, f"""SELECT COUNT(*) n FROM visita v JOIN unidad_funcional uf ON uf.nro_uf=v.nro_uf
+                                     JOIN sector s ON s.id_sector=uf.id_sector WHERE {' AND '.join(vcond)}""", vargs)["n"]
+        agr = lambda campo, extra="", lim=50: filas(c, f"""SELECT {campo} etiqueta, COUNT(*) n, SUM({_ABIERTA}) abiertas {extra}
+                                                     {_BASE_REPORTE} WHERE {where} GROUP BY 1 ORDER BY n DESC LIMIT {lim}""", args)
+        out = {
+            "desde": desde.isoformat(), "hasta": hasta.isoformat(), "resumen": res,
+            "por_estado": agr("h.estado"),
+            "por_sector": agr("s.nombre"),
+            "por_rubro": agr("r.nombre"),
+            "por_tipo": agr("CONCAT(h.codigo, ' · ', c.falta)", lim=15),
+            "por_inspector": agr("u.nombre"),
+            "por_uf": agr("v.nro_uf", lim=10),
+            "por_mes": agr("DATE_FORMAT(h.fecha, '%%Y-%%m')", lim=120),
+            "listado": _listado(c, where, args, 500),
+        }
+    out["por_mes"].sort(key=lambda x: x["etiqueta"])
+    for k in ("resumen",):
+        out[k] = {a: (int(b) if isinstance(b, (int, float)) and a != "dias_cierre" else b) for a, b in out[k].items()}
+    return out
+
+
+@app.get("/api/reportes.csv")
+def api_reportes_csv(req: Request):
+    exigir(req, "consulta")
+    desde, hasta, where, args = _filtros_reporte(req)
+    with conexion() as c:
+        rows = _listado(c, where, args, 50000)
+    import csv
+    import io
+    buf = io.StringIO()
+    buf.write("\ufeff")                          # BOM: Excel abre bien los acentos
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["N° falta", "Fecha", "U.F.", "Sector", "Rubro", "Código", "Falta", "Estado", "Revisión", "Cierre",
+                "Reiterancia", "Cargó", "Observación"])
+    for r in rows:
+        w.writerow([r["n"], r["fecha"], r["uf"], r["sector"], r["rubro"], r["codigo"], r["falta"], r["estado"],
+                    r["revision"] or "", r["cierre"] or "", r["reit"], r["cargo"], (r["obs"] or "").replace("\n", " ")])
+    nombre = f"faltas_{desde.isoformat()}_{hasta.isoformat()}.csv"
+    return Response(buf.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}"', "Cache-Control": "no-store"})
+
+
+# ───────── Modo "todo en uno" (Railway): la API sirve también la web, sin nginx ─────────
+if os.environ.get("SERVIR_WEB") == "1":
+    from fastapi.staticfiles import StaticFiles
+
+    _CABECERAS = {
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                                   "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; "
+                                   "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+        "Permissions-Policy": "geolocation=(self), camera=(self), microphone=()",
+        "Strict-Transport-Security": "max-age=31536000",
+    }
+
+    @app.middleware("http")
+    async def _cabeceras(req: Request, call_next):
+        resp = await call_next(req)
+        for k, v in _CABECERAS.items():
+            resp.headers.setdefault(k, v)
+        p = req.url.path
+        if p == "/" or p.endswith((".html", ".js", ".css")):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+    app.mount("/", StaticFiles(directory=os.environ.get("WEB_DIR", "/srv/web"), html=True), name="web")

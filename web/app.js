@@ -634,6 +634,91 @@ function confirmarBaja(c) {
 }
 $('bCat').onclick = catalogo;
 
+/* ───────── reportes (consulta, inspector y superiores) ───────── */
+const REP = {desde: '', hasta: '', sector: '', estado: '', rubro: ''};
+function qsRep() {
+  return Object.entries(REP).filter(([, v]) => v).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+}
+function barras(lista, opts = {}) {
+  if (!lista.length) return '<p class="empty">Sin datos para el período.</p>';
+  const max = Math.max(...lista.map(x => x.n)) || 1;
+  return `<div class="barras">${lista.map(x => `<div class="barra"${opts.click ? ` data-uf="${esc(x.etiqueta)}"` : ''}>
+    <span class="b-et" title="${esc(x.etiqueta)}">${esc(opts.pref || '')}${esc(x.etiqueta)}</span>
+    <span class="b-pista"><span class="b-tot" style="width:${(x.n / max * 100).toFixed(1)}%"><span class="b-ab" style="width:${(x.abiertas / x.n * 100 || 0).toFixed(1)}%"></span></span></span>
+    <span class="b-n">${x.n}${x.abiertas ? ` <small>(${x.abiertas} ab.)</small>` : ''}</span></div>`).join('')}</div>`;
+}
+function columnasMes(lista) {
+  if (!lista.length) return '<p class="empty">Sin datos para el período.</p>';
+  const max = Math.max(...lista.map(x => x.n)) || 1;
+  const mes = s => ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'][+s.slice(5, 7) - 1] + ' ' + s.slice(2, 4);
+  return `<div class="cols">${lista.map(x => `<div class="col" title="${esc(x.etiqueta)}: ${x.n} faltas, ${x.abiertas} abiertas">
+    <span class="c-n">${x.n}</span><span class="c-pista"><span class="c-tot" style="height:${(x.n / max * 100).toFixed(1)}%"><span class="c-ab" style="height:${(x.abiertas / x.n * 100 || 0).toFixed(1)}%"></span></span></span>
+    <span class="c-et">${mes(x.etiqueta)}</span></div>`).join('')}</div>`;
+}
+async function reportes() {
+  if (!REP.hasta) { REP.hasta = hoy(); REP.desde = masDias(-30); }
+  const rubros = [...new Set(Object.values(S.cat).map(c => c.rubro).filter(Boolean))].sort();
+  const m = modal('Reportes', `
+    <div class="rep-filtros no-print">
+      <div class="f"><label for="rD">Desde</label><input id="rD" type="date" value="${REP.desde}" max="${hoy()}"></div>
+      <div class="f"><label for="rH">Hasta</label><input id="rH" type="date" value="${REP.hasta}" max="${hoy()}"></div>
+      <div class="f"><label for="rS">Sector</label><select id="rS"><option value="">Todos</option>${['I','II','III','IV','V','Golf'].map(s => `<option ${REP.sector === s ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
+      <div class="f"><label for="rE">Estado</label><select id="rE">${[['', 'Todos'], ['abiertas', 'Abiertas'], ['vencidas', 'Abiertas y vencidas'], ['cerradas', 'Cerradas']].concat(ESTADOS.map(e => [e, e])).map(([v, l]) => `<option value="${esc(v)}" ${REP.estado === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+      <div class="f"><label for="rR">Rubro</label><select id="rR"><option value="">Todos</option>${rubros.map(r => `<option ${REP.rubro === r ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></div>
+      <div class="rep-atajos"><button type="button" data-per="7">7 días</button><button type="button" data-per="30">30 días</button><button type="button" data-per="90">3 meses</button><button type="button" data-per="365">12 meses</button></div>
+    </div>
+    <p class="rep-tit only-print" id="rTit"></p>
+    <div id="rCuerpo"><p class="note">Cargando…</p></div>
+  `, '<a class="btn no-print" id="rCsv" href="#">Descargar Excel (CSV)</a><button type="button" class="no-print" id="rPrint">Imprimir / PDF</button><button type="button" class="pri no-print" data-close>Cerrar</button>');
+  m.querySelector('.dlg').classList.add('ancho');
+  const leer = () => { REP.desde = $('rD').value; REP.hasta = $('rH').value; REP.sector = $('rS').value; REP.estado = $('rE').value; REP.rubro = $('rR').value; cargarRep(); };
+  ['rD', 'rH', 'rS', 'rE', 'rR'].forEach(id => { $(id).onchange = leer; });
+  m.querySelectorAll('[data-per]').forEach(b => { b.onclick = () => { $('rH').value = hoy(); $('rD').value = masDias(-(+b.dataset.per)); leer(); }; });
+  $('rPrint').onclick = () => window.print();
+  cargarRep();
+}
+async function cargarRep() {
+  const box = $('rCuerpo'); if (!box) return;
+  $('rCsv').href = '/api/reportes.csv?' + qsRep();
+  $('rTit').textContent = `Período ${fmt(REP.desde)} al ${fmt(REP.hasta)}` + (REP.sector ? ` · Sector ${REP.sector}` : '') + (REP.estado ? ` · ${REP.estado}` : '') + (REP.rubro ? ` · ${REP.rubro}` : '');
+  box.style.opacity = .5;
+  let d;
+  try { d = await api('/reportes?' + qsRep()); } catch (e) { box.style.opacity = 1; box.innerHTML = `<p class="empty">${esc(e.message)}</p>`; return; }
+  box.style.opacity = 1;
+  const r = d.resumen, n = x => x == null ? 0 : x;
+  const tile = (v, l, cls) => `<div class="tile ${cls || ''}"><b>${v}</b><span>${l}</span></div>`;
+  box.innerHTML = `
+    <div class="tiles">
+      ${tile(n(r.detectadas), 'faltas detectadas')}
+      ${tile(n(r.abiertas), 'siguen abiertas', n(r.abiertas) ? 'warn' : '')}
+      ${tile(n(r.vencidas), 'con revisión vencida', n(r.vencidas) ? 'bad' : '')}
+      ${tile(n(r.cerradas), 'cerradas', 'ok')}
+      ${tile(r.dias_cierre == null ? '—' : r.dias_cierre, 'días promedio hasta el cierre')}
+      ${tile(n(r.visitas), 'visitas realizadas')}
+      ${tile(n(r.ufs), 'U.F. con faltas')}
+      ${tile(n(r.reiteradas), 'faltas reiteradas')}
+    </div>
+    <p class="note leyenda-b"><i class="sw tot"></i>Total <i class="sw ab"></i>Siguen abiertas</p>
+    <section class="rep-sec"><h3>Faltas por mes</h3>${columnasMes(d.por_mes)}</section>
+    <div class="rep-grid">
+      <section class="rep-sec"><h3>Por estado</h3>${barras(d.por_estado)}</section>
+      <section class="rep-sec"><h3>Por sector</h3>${barras(d.por_sector)}</section>
+      <section class="rep-sec"><h3>Por rubro</h3>${barras(d.por_rubro)}</section>
+      <section class="rep-sec"><h3>Por inspector</h3>${barras(d.por_inspector)}</section>
+      <section class="rep-sec"><h3>Tipos de faltas más frecuentes</h3>${barras(d.por_tipo)}</section>
+      <section class="rep-sec"><h3>U.F. con más faltas</h3>${barras(d.por_uf, {pref: 'U.F. ', click: true})}</section>
+    </div>
+    <section class="rep-sec"><h3>Detalle (${d.listado.length}${d.listado.length >= 500 ? ' más recientes; el resto en el Excel' : ''})</h3>
+      <div class="scroll"><table class="cat rep-tab"><thead><tr><th>Falta</th><th>Fecha</th><th>U.F.</th><th>Tipo</th><th>Estado</th><th>Revisión / cierre</th><th>Cargó</th></tr></thead><tbody>
+      ${d.listado.map(x => `<tr data-n="${esc(x.n)}" data-uf="${x.uf}"><td class="mono">${esc(x.n)}</td><td>${fmt(x.fecha)}</td><td class="mono">${x.uf}</td>
+        <td><span class="mono">${esc(x.codigo)}</span> ${esc(x.falta)}</td><td>${pillEstado(x)}</td><td>${CERRADOS.indexOf(x.estado) >= 0 ? 'Cerró ' + fmt(x.cierre) : fmt(x.revision)}</td><td>${esc(x.cargo)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">No hay faltas con estos filtros.</td></tr>'}
+      </tbody></table></div></section>`;
+  const ir = (uf, n) => { const i = ufLot[uf]; cerrarModal(); if (i != null) { seguir = false; marcarGps(); seleccionar(i); irA(i); } if (n && S.hallazgos[n]) fichaFalta(n); };
+  box.querySelectorAll('tr[data-n]').forEach(tr => { tr.onclick = () => ir(+tr.dataset.uf, tr.dataset.n); });
+  box.querySelectorAll('.barra[data-uf]').forEach(b => { b.onclick = () => ir(+b.dataset.uf); });
+}
+$('bRep').onclick = reportes;
+
 /* ───────── datos y aviso en vivo ───────── */
 async function cargar() {
   const d = await api('/estado');

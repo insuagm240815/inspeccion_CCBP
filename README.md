@@ -158,6 +158,45 @@ Levanta la app completa (MariaDB + API + nginx) en una máquina de GitHub, con d
 
 El Codespace se apaga solo tras 30 minutos sin uso. Al volver a abrirlo, los datos siguen ahí. Si se borra el Codespace, se pierden los datos de prueba.
 
+## Reportes
+
+Menú **Reportes**, disponible para consulta, inspector, supervisor y admin.
+
+- Filtros: período (con atajos de 7 días, 30 días, 3 y 12 meses), sector, estado (incluye "abiertas y vencidas") y rubro.
+- Indicadores: faltas detectadas, abiertas, vencidas, cerradas, días promedio hasta el cierre, visitas, U.F. con faltas y reiteradas.
+- Gráficos: faltas por mes, por estado, por sector, por rubro, por inspector, tipos más frecuentes y U.F. con más faltas (cada barra muestra en naranja cuántas siguen abiertas).
+- Detalle de las faltas (las 500 más recientes en pantalla; tocar una fila abre la ficha) y **Descargar Excel (CSV)** con todas las del filtro.
+- **Imprimir / PDF** arma una versión para imprimir o guardar como PDF desde el navegador.
+
+## Entorno de prueba en Railway
+
+Para dejar la app en línea de forma permanente durante la prueba, **solo con datos ficticios** (Railway guarda los datos fuera del país).
+Se arman dos servicios desde este repositorio:
+
+| Servicio | Origen | Configuración |
+|---|---|---|
+| **db** | GitHub repo, *Root Directory* `/db` (usa `db/Dockerfile`) | Volumen en `/var/lib/mysql`. Variables: `MARIADB_ROOT_PASSWORD`, `DB_APP_PASSWORD` (claves largas) |
+| **app** | GitHub repo, raíz del repo | Variable `RAILWAY_DOCKERFILE_PATH=Dockerfile.railway`. Volumen en `/data/fotos`. Dominio público en *Settings → Networking → Generate Domain* |
+
+Variables del servicio **app**:
+
+```
+RAILWAY_DOCKERFILE_PATH=Dockerfile.railway
+RAILWAY_RUN_UID=0
+DB_HOST=${{db.RAILWAY_PRIVATE_DOMAIN}}
+DB_PORT=3306
+DB_USER=inspeccion
+DB_PASSWORD=${{db.DB_APP_PASSWORD}}
+DB_NAME=inspeccion_ccbp
+COOKIE_SECURE=1
+ADMIN_USUARIO=admin
+ADMIN_CLAVE=<clave del admin, 10+ caracteres>
+DEMO_CLAVE=<opcional: crea inspector, consulta y supervisor de prueba con esta clave>
+```
+
+`ADMIN_*` y `DEMO_CLAVE` solo crean usuarios que no existan; nunca cambian una clave existente. Una vez creados, se pueden borrar esas variables.
+En este modo la API sirve también la web (sin nginx) y agrega las mismas cabeceras de seguridad.
+
 ## Pendiente (próximas etapas)
 
 - Observaciones preventivas, marcas en áreas comunes, urgencias y regularización. El modelo ya está en el DER.
