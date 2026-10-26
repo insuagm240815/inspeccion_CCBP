@@ -29,7 +29,7 @@ def main():
     p = argparse.ArgumentParser(prog="usuarios")
     s = p.add_subparsers(dest="cmd", required=True)
     c = s.add_parser("crear"); c.add_argument("--usuario", required=True); c.add_argument("--nombre", required=True)
-    c.add_argument("--rol", choices=["inspector", "supervisor", "admin"], default="inspector")
+    c.add_argument("--rol", choices=["consulta", "inspector", "supervisor", "admin"], default="inspector")
     s.add_parser("clave").add_argument("--usuario", required=True)
     s.add_parser("baja").add_argument("--usuario", required=True)
     s.add_parser("alta").add_argument("--usuario", required=True)

@@ -28,9 +28,10 @@ Celular / PC ── HTTPS ──► Cloudflare Tunnel (o FortiGate) ──► VM
 
   | Rol | Puede |
   |---|---|
+  | consulta | ver todo (plano, fichas, historial, fotos, agenda) y **gestionar faltas abiertas**: marcarlas como *Notificado/Intimado* o *En proceso de resolución*, con nota y fecha de revisión. No carga visitas, no sube fotos, no cierra faltas |
   | inspector | cargar visitas, cambiar estados, reprogramar |
   | supervisor | además, borrar faltas (con motivo obligatorio) |
-  | admin | además, cargar el catálogo |
+  | admin | todo: es el superusuario (incluye cargar el catálogo) |
 
 - **Auditoría.** Cada visita, falta, cambio de estado, foto y borrado guarda quién lo hizo. Los borrados dejan constancia en `registro_borrado`, y las fotos de lo borrado pasan a `_papelera` en lugar de eliminarse.
 - **Fotos privadas.** Solo se ven con sesión iniciada (no hay links públicos). Se re-codifican al subirlas, lo que elimina los metadatos EXIF (incluida la ubicación del celular) y descarta archivos que no sean imágenes.
@@ -82,13 +83,26 @@ El tráfico pasa por Cloudflare cifrado, pero los datos no se almacenan ahí.
 | Alta de usuario | `docker compose exec api python -m app.usuarios crear --usuario mperez --nombre "María Pérez" --rol inspector` |
 | Cambio de clave | `docker compose exec api python -m app.usuarios clave --usuario mperez` |
 | Baja (cierra sus sesiones) | `docker compose exec api python -m app.usuarios baja --usuario mperez` |
+| Usuario de solo lectura | `docker compose exec api python -m app.usuarios crear --usuario jefe --nombre "Jefe de Construcciones" --rol consulta` |
 | Listar usuarios | `docker compose exec api python -m app.usuarios listar` |
 | Ver logs | `docker compose logs -f api` |
-| Actualizar la app | copiar los archivos nuevos y `docker compose up -d --build` |
+| Actualizar la app | `git pull`, `docker compose up -d --build` y aplicar las migraciones nuevas de `db/migraciones/` (ver abajo) |
 
 **Catálogo:** un admin entra en Catálogo, pega las columnas Código, Rubro, Falta, Norma, Artículo, Penalidad copiadas de la planilla y tilda "Quitar los códigos de ejemplo".
 
 **U.F. y Pilar:** `02_datos_base.sql` arma los grupos a partir del plano: cada lote dibujado es un Pilar. Si se carga la pestaña "U.F. y Pilar" real en la tabla `uf_pilar`, la reiterancia pasa a calcularse con los grupos reales.
+
+## Migraciones
+
+Los scripts de `db/init/` solo corren al crear la base. Cuando una versión nueva cambia la estructura, trae un archivo en `db/migraciones/`; se aplica así (se puede correr más de una vez sin problema):
+
+```
+for f in db/migraciones/*.sql; do
+  docker compose exec -T db sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" inspeccion_ccbp' < "$f"
+done
+```
+
+En Codespaces lo hace solo `scripts/codespace-inicio.sh`.
 
 ## Backup
 

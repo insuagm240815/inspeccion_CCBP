@@ -58,7 +58,7 @@ CREATE TABLE usuario (
   id_usuario   INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   usuario      VARCHAR(40) NOT NULL UNIQUE,
   nombre       VARCHAR(80) NOT NULL,
-  rol          ENUM('inspector','supervisor','admin') NOT NULL DEFAULT 'inspector',
+  rol          ENUM('consulta','inspector','supervisor','admin') NOT NULL DEFAULT 'inspector',
   clave_hash   VARCHAR(255) NOT NULL,                     -- argon2id
   activo       BOOLEAN NOT NULL DEFAULT TRUE,
   creado       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -122,7 +122,7 @@ CREATE TABLE hallazgo (
   codigo             VARCHAR(10) NOT NULL,
   fecha              DATE NOT NULL,
   estado             ENUM('Pendiente','Aviso verbal','Aviso por folleto','Derivado a Comisión',
-                          'Notificado/Intimado','Resuelto','Verificado sin falta') NOT NULL DEFAULT 'Pendiente',
+                          'Notificado/Intimado','En proceso de resolución','Resuelto','Verificado sin falta') NOT NULL DEFAULT 'Pendiente',
   fecha_revision     DATE NULL,
   foto_tomada        BOOLEAN NOT NULL DEFAULT FALSE,
   derivado_comision  BOOLEAN NOT NULL DEFAULT FALSE,

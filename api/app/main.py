@@ -15,8 +15,9 @@ from .seguridad import COOKIE, COOKIE_SECURE, SESION_HORAS, exigir, ip_de, login
 app = FastAPI(title="Inspección CCBP", docs_url=None, redoc_url=None, openapi_url=None)
 
 ESTADOS = ['Pendiente', 'Aviso verbal', 'Aviso por folleto', 'Derivado a Comisión',
-           'Notificado/Intimado', 'Resuelto', 'Verificado sin falta']
+           'Notificado/Intimado', 'En proceso de resolución', 'Resuelto', 'Verificado sin falta']
 CERRADOS = ['Resuelto', 'Verificado sin falta']
+ESTADOS_GESTION = ['Notificado/Intimado', 'En proceso de resolución']   # lo que puede marcar el usuario de consulta
 ORIGENES = ['Recorrido de inspección', 'Reclamo de vecino', 'Reclamo del servicio de recolección', 'Revisión de caso']
 CONTACTOS = ['Hablé con el residente', 'No había nadie', 'No había nadie, dejé aviso escrito',
              'Hablé con personal de poda, pasto, obra o limpieza', 'Pendiente de visita']
@@ -134,7 +135,7 @@ def salud():
 # ───────── lectura ─────────
 @app.get("/api/estado")
 def api_estado(req: Request):
-    exigir(req)
+    exigir(req, "consulta")
     with conexion() as c:
         out = {
             "version": _version,
@@ -162,7 +163,7 @@ def api_estado(req: Request):
 
 @app.get("/api/fotos/{nro}")
 def api_foto(nro: str, req: Request):
-    exigir(req)
+    exigir(req, "consulta")
     with conexion() as c:
         f = fila(c, "SELECT archivo FROM foto WHERE nro_foto=%s", (nro[:10],))
     if not f:
@@ -174,7 +175,7 @@ def api_foto(nro: str, req: Request):
 @app.get("/api/eventos")
 async def api_eventos(req: Request):
     """Server-Sent Events: avisa a cada navegador cuando cambian los datos, para que recargue."""
-    await run_in_threadpool(exigir, req)
+    await run_in_threadpool(exigir, req, "consulta")
 
     async def flujo():
         visto, quieto = -1, 0
@@ -263,21 +264,30 @@ def _falta(c, n):
 
 @app.post("/api/faltas/{n}/estado")
 async def api_estado_falta(n: str, req: Request):
-    u = await run_in_threadpool(exigir, req, "inspector", True)
+    u = await run_in_threadpool(exigir, req, "consulta", True)
+    gestion = u["rol"] == "consulta"          # gestión administrativa: sin visita a campo ni fotos
     d, fotos = await _form(req)
 
     def tx(escritos):
         estado = d.get("estado")
         if estado not in ESTADOS:
             raise HTTPException(400, "Estado no válido.")
+        if gestion and estado not in ESTADOS_GESTION:
+            raise HTTPException(403, "Tu usuario solo puede marcar la falta como notificada o en proceso de resolución.")
+        if gestion and fotos:
+            raise HTTPException(403, "Tu usuario no puede subir fotos.")
         t = hoy()
         with conexion() as c:
             h = _falta(c, n)
+            if gestion and h["estado"] in CERRADOS:
+                raise HTTPException(403, "La falta está cerrada; solo un inspector puede reabrirla.")
             cerr = estado in CERRADOS
-            v = fila(c, "SELECT nro_visita FROM visita WHERE nro_uf=%s AND fecha=%s ORDER BY nro_visita DESC LIMIT 1",
-                     (h["nro_uf"], t))
-            nv = v["nro_visita"] if v else None
-            if not nv:
+            nv = None
+            if not gestion:
+                v = fila(c, "SELECT nro_visita FROM visita WHERE nro_uf=%s AND fecha=%s ORDER BY nro_visita DESC LIMIT 1",
+                         (h["nro_uf"], t))
+                nv = v["nro_visita"] if v else None
+            if not nv and not gestion:
                 nv = siguiente(c, "V")
                 lat, lon = _coord(d.get("lat"), -35.5, -33.5), _coord(d.get("lon"), -59.8, -57.8)
                 ejecutar(c, """INSERT INTO visita (nro_visita,fecha,nro_uf,origen,contacto,observacion,lat,lon,precision_m,id_usuario)

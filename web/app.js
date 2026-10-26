@@ -10,11 +10,12 @@ const masDias = n => { const d = new Date(hoy() + 'T12:00:00'); d.setDate(d.getD
 
 const SECTORES = [[1,591,'I'],[592,1185,'II'],[1186,1721,'III'],[1722,2289,'IV'],[2290,2851,'V'],[2852,2955,'Golf']];
 const sectorDe = uf => { const s = SECTORES.find(x => uf >= x[0] && uf <= x[1]); return s ? s[2] : '—'; };
-const ESTADOS = ['Pendiente','Aviso verbal','Aviso por folleto','Derivado a Comisión','Notificado/Intimado','Resuelto','Verificado sin falta'];
+const ESTADOS = ['Pendiente','Aviso verbal','Aviso por folleto','Derivado a Comisión','Notificado/Intimado','En proceso de resolución','Resuelto','Verificado sin falta'];
+const ESTADOS_GESTION = ['Notificado/Intimado','En proceso de resolución'];   // lo único que puede marcar el usuario de consulta
 const CERRADOS = ['Resuelto','Verificado sin falta'];
 const ORIGENES = ['Recorrido de inspección','Reclamo de vecino','Reclamo del servicio de recolección'];
 const CONTACTOS = ['Hablé con el residente','No había nadie','No había nadie, dejé aviso escrito','Hablé con personal de poda, pasto, obra o limpieza','Pendiente de visita'];
-const NIVEL = {inspector: 1, supervisor: 2, admin: 3};
+const NIVEL = {consulta: 0, inspector: 1, supervisor: 2, admin: 3};
 
 /* ───────── estado ───────── */
 const S = {visitas: {}, hallazgos: {}, hist: [], fotos: [], cat: {}, usuarios: {}};
@@ -307,7 +308,7 @@ function pintarPanel() {
   const scroll = p.scrollTop;
   p.innerHTML = `<div class="panel-h"><div><h2>U.F. ${esc(ufs.join(' / '))}</h2><div class="sub">Sector ${esc(sectorDe(ufs[0]))}${ufs.length > 1 ? ' · lote unificado' : ''}${posVigente() ? ' · a ' + metrosA(SEL, POS) + ' m de vos' : ''}</div></div><button type="button" class="x" id="pClose" aria-label="Cerrar ficha">×</button></div>
   <div class="panel-b">
-    <div class="row"><button type="button" class="pri" id="pNueva">Nueva visita</button></div>
+    ${puede('inspector') ? '<div class="row"><button type="button" class="pri" id="pNueva">Nueva visita</button></div>' : '<p class="note">Usuario de consulta: solo lectura.</p>'}
     <section class="list"><h3>Faltas abiertas (${ab.length})</h3>${ab.length ? ab.map(item).join('') : '<p class="empty">Sin faltas abiertas.</p>'}</section>
     <section class="list"><h3>Visitas (${vs.length})</h3>${vs.length ? vs.slice(0, 15).map(v => `<div class="item"><span class="top"><span class="cod">${esc(v.n)} · ${fmt(v.fecha)}</span><span class="pill n">${esc(v.origen)}</span></span><span class="meta">${esc(v.contacto || 'Sin contacto registrado')}${v.obs ? ' · ' + esc(v.obs) : ''}</span><span class="meta">${quien(v.autor)}${v.lat != null ? ` · GPS ±${v.prec || '?'} m` : ''}</span>${fotosDe('', v.n)}</div>`).join('') : '<p class="empty">Todavía no hay visitas a esta U.F.</p>'}</section>
     ${ce.length ? `<section class="list"><h3>Faltas cerradas (${ce.length})</h3>${ce.map(item).join('')}</section>` : ''}
@@ -315,7 +316,7 @@ function pintarPanel() {
   p.scrollTop = scroll;
   p.querySelectorAll('img[data-foto]').forEach(ocultarRota);
   $('pClose').onclick = () => { SEL = -1; p.hidden = true; render(); };
-  $('pNueva').onclick = () => formVisita(ufs[0]);
+  if ($('pNueva')) $('pNueva').onclick = () => formVisita(ufs[0]);
   p.querySelectorAll('[data-falta]').forEach(b => { b.onclick = () => fichaFalta(b.dataset.falta); });
 }
 
@@ -440,20 +441,20 @@ function fichaFalta(n) {
     </dl>
     ${fotosDe(n)}
     <div class="list"><h3>Historial</h3><div class="timeline">${hs.map(x => `<div><span class="d">${fmt(x.fecha)} · ${quien(x.autor)}</span><br>${esc(x.cambio)}${x.nota ? ' — ' + esc(x.nota) : ''}</div>`).join('') || '<p class="empty">Sin movimientos.</p>'}</div></div>
-  `, `${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}<button type="button" class="pri" id="aEstado">Cambiar estado</button>`);
-  $('aEstado').onclick = () => formEstado(n);
+  `, `${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${puede('inspector') && abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}${puede('inspector') ? '<button type="button" class="pri" id="aEstado">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta(h) ? '<button type="button" class="pri" id="aEstado">Gestionar</button>' : '')}`);
+  if ($('aEstado')) $('aEstado').onclick = () => formEstado(n);
   if ($('aRepro')) $('aRepro').onclick = () => formRepro(n);
   if ($('aBorrar')) $('aBorrar').onclick = () => formBorrar(n);
   return m;
 }
 function formEstado(n) {
-  const h = S.hallazgos[n];
-  modal('Cambiar estado · ' + n, `
-    <div class="f"><label for="eE">Nuevo estado</label><select id="eE">${opts(ESTADOS, h.estado)}</select></div>
+  const h = S.hallazgos[n], gestion = !puede('inspector');
+  const lista = gestion ? ESTADOS_GESTION : ESTADOS;
+  modal((gestion ? 'Gestionar · ' : 'Cambiar estado · ') + n, `
+    <div class="f"><label for="eE">Nuevo estado</label><select id="eE">${opts(lista, lista.indexOf(h.estado) >= 0 ? h.estado : lista[0])}</select></div>
     <div class="f" id="eRw"><label for="eR">Próxima revisión</label><input id="eR" type="date" value="${masDias(7)}" min="${hoy()}"></div>
-    <div class="f"><label for="eN">Nota</label><textarea id="eN" rows="2" placeholder="Qué se vio o se habló"></textarea></div>
-    ${campoFotos('eF')}
-    <p class="note">Se registra una visita “Revisión de caso” de hoy para la U.F. (o se usa la que ya exista).</p>
+    <div class="f"><label for="eN">Nota</label><textarea id="eN" rows="2" placeholder="${gestion ? 'Nº de nota o acta, a quién se notificó, plazo dado' : 'Qué se vio o se habló'}"></textarea></div>
+    ${gestion ? '<p class="note">Queda en el historial de la falta con tu nombre. No genera una visita.</p>' : campoFotos('eF') + '<p class="note">Se registra una visita “Revisión de caso” de hoy para la U.F. (o se usa la que ya exista).</p>'}
   `, '<button type="button" data-close>Cancelar</button><button type="button" class="pri" id="eOk">Guardar</button>');
   const sync = () => { $('eRw').hidden = CERRADOS.indexOf($('eE').value) >= 0; };
   $('eE').onchange = sync; sync();

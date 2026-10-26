@@ -15,7 +15,7 @@ PH = PasswordHasher()
 SESION_HORAS = int(os.environ.get("SESION_HORAS", "12"))
 COOKIE = "ccbp_sid"
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "1") == "1"
-NIVEL = {"inspector": 1, "supervisor": 2, "admin": 3}
+NIVEL = {"consulta": 0, "inspector": 1, "supervisor": 2, "admin": 3}   # consulta: solo lectura
 _HASH_FALSO = PH.hash(secrets.token_hex(16))   # para que un usuario inexistente tarde lo mismo
 
 

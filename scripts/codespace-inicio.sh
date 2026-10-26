@@ -23,14 +23,22 @@ echo "Esperando a la API…"
 for i in $(seq 1 60); do curl -fs http://127.0.0.1:8080/api/salud >/dev/null 2>&1 && break; sleep 3; done
 curl -fs http://127.0.0.1:8080/api/salud >/dev/null || { docker compose logs --tail=50; exit 1; }
 
-if [ ! -f datos/.usuarios-demo ]; then
+# Migraciones (idempotentes): actualizan una base creada con una versión anterior
+for f in db/migraciones/*.sql; do
+  [ -f "$f" ] && docker compose exec -T db sh -c 'mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" inspeccion_ccbp' < "$f"
+done
+
+# Usuarios de prueba (se crean los que falten, todos con la misma clave)
+if [ -f datos/.usuarios-demo ]; then
+  CLAVE="$(sed -n 's/^Clave[^:]*: //p' datos/.usuarios-demo)"
+else
   CLAVE="$(openssl rand -base64 12 | tr -d '/+=')"
-  for u in "inspector:Inspector de prueba:inspector" "supervisor:Supervisor de prueba:supervisor" "admin:Admin de prueba:admin"; do
-    IFS=: read -r usr nom rol <<< "$u"
-    docker compose exec -T -e CLAVE_NUEVA="$CLAVE" api python -m app.usuarios crear --usuario "$usr" --nombre "$nom" --rol "$rol" || true
-  done
-  printf 'Usuarios de prueba: inspector, supervisor, admin\nClave (la misma para los tres): %s\n' "$CLAVE" > datos/.usuarios-demo
 fi
+for u in "inspector:Inspector de prueba:inspector" "consulta:Consulta de prueba:consulta" "supervisor:Supervisor de prueba:supervisor" "admin:Admin de prueba:admin"; do
+  IFS=: read -r usr nom rol <<< "$u"
+  docker compose exec -T -e CLAVE_NUEVA="$CLAVE" api python -m app.usuarios crear --usuario "$usr" --nombre "$nom" --rol "$rol" 2>/dev/null || true
+done
+printf 'Usuarios de prueba: inspector, consulta, supervisor, admin\nClave (la misma para todos): %s\n' "$CLAVE" > datos/.usuarios-demo
 
 echo
 echo "════════════════════════════════════════════════════"

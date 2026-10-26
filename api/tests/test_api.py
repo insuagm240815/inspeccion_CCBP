@@ -26,7 +26,7 @@ H = {"X-CCBP": "1"}
 def usuarios():
     nombres = {}
     with conexion() as c:
-        for rol in ("inspector", "supervisor", "admin"):
+        for rol in ("consulta", "inspector", "supervisor", "admin"):
             u = f"t_{rol[:3]}_{SUF}"
             ejecutar(c, "INSERT INTO usuario (usuario,nombre,rol,clave_hash) VALUES (%s,%s,%s,%s)",
                      (u, f"Prueba {rol}", rol, hash_clave(CLAVE)))
@@ -135,3 +135,45 @@ def test_catalogo_solo_admin(usuarios):
     assert r.status_code == 200 and r.json()["guardados"] == 1
     with conexion() as c:
         ejecutar(c, "DELETE FROM catalogo_falta WHERE codigo=%s", ("T-" + SUF[:4],))
+
+
+def test_consulta_solo_lee(usuarios):
+    import json
+    c = cliente(usuarios["consulta"])
+    assert c.get("/api/estado").status_code == 200
+    assert c.get("/api/yo").json()["rol"] == "consulta"
+    with conexion() as cx:
+        hoy = str(fila(cx, "SELECT CURDATE() d")["d"])
+    assert c.post("/api/visitas", data={"datos": json.dumps({"uf": 10, "fecha": hoy})}, headers=H).status_code == 403
+    assert c.post("/api/faltas/F-0001/reprogramar", json={"fecha": "2099-01-01"}, headers=H).status_code == 403
+
+
+def test_consulta_gestiona_faltas(usuarios):
+    import json
+    ins, con = cliente(usuarios["inspector"]), cliente(usuarios["consulta"])
+    with conexion() as cx:
+        hoy = str(fila(cx, "SELECT CURDATE() d")["d"])
+    r = ins.post("/api/visitas", data={"datos": json.dumps({"uf": 777, "fecha": hoy,
+                 "faltas": [{"codigo": "EJ-01", "revision": "2099-01-01"}]})}, headers=H)
+    nf = r.json()["faltas"][0]
+    with conexion() as cx:
+        visitas_antes = fila(cx, "SELECT COUNT(*) n FROM visita")["n"]
+
+    est = lambda c, e, **kw: c.post(f"/api/faltas/{nf}/estado", data={"datos": json.dumps(dict(estado=e, nota="nota", **kw))}, headers=H)
+    assert est(con, "Notificado/Intimado", revision="2099-02-01").status_code == 200
+    assert est(con, "En proceso de resolución").status_code == 200
+    assert est(con, "Resuelto").status_code == 403                       # no puede cerrar
+    r = con.post(f"/api/faltas/{nf}/estado", data={"datos": json.dumps({"estado": "Notificado/Intimado"})},
+                 files=[("f_estado", ("a.jpg", jpeg(), "image/jpeg"))], headers=H)
+    assert r.status_code == 403                                           # no sube fotos
+
+    with conexion() as cx:
+        h = fila(cx, "SELECT estado, derivado_comision FROM hallazgo WHERE nro_hallazgo=%s", (nf,))
+        assert h["estado"] == "En proceso de resolución" and h["derivado_comision"]
+        assert fila(cx, "SELECT COUNT(*) n FROM visita")["n"] == visitas_antes   # no genera visitas
+        quien = fila(cx, """SELECT u.rol FROM historial x JOIN usuario u ON u.id_usuario=x.id_usuario
+                            WHERE x.nro_registro=%s ORDER BY x.id_historial DESC LIMIT 1""", (nf,))["rol"]
+        assert quien == "consulta"
+
+    assert est(ins, "Resuelto").status_code == 200                       # el inspector sí cierra
+    assert est(con, "Notificado/Intimado").status_code == 403            # cerrada: consulta no la reabre
