@@ -64,7 +64,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('modal'
 const quien = id => `<span class="who">${esc((S.usuarios[id] || {}).nombre || '—')}</span>`;
 const fotoURL = n => '/api/fotos/' + encodeURIComponent(n);
 const ocultarRota = img => { img.addEventListener('error', () => { img.style.visibility = 'hidden'; }); };
-const catTxt = cod => { const c = S.cat[cod]; return c ? c.falta : '(código fuera del catálogo)'; };
+const catTxt = cod => { const c = S.cat[cod]; return c ? c.falta : '(tipo de falta inexistente)'; };
 function pillEstado(h) {
   if (!abierta(h)) return `<span class="pill ok">${esc(h.estado)}</span>`;
   const k = h.revision && h.revision < hoy() ? 'venc' : h.revision === hoy() ? 'hoy' : 'n';
@@ -395,7 +395,7 @@ function formVisita(uf) {
     <div class="f"><label for="vobs">Observación de la visita</label><textarea id="vobs" rows="2" placeholder="Opcional"></textarea></div>
     ${campoFotos('vfo')}
     <div id="faltas" class="list"></div>
-    ${sinCat ? '<p class="note">El catálogo está vacío: un administrador tiene que cargarlo para registrar faltas.</p>' : '<button type="button" id="addF">Agregar falta</button>'}
+    ${sinCat ? '<p class="note">No hay tipos de faltas cargados: un administrador tiene que cargarlos para registrar faltas.</p>' : '<button type="button" id="addF">Agregar falta</button>'}
   `, '<button type="button" data-close>Cancelar</button><button type="button" class="pri" id="vOk">Guardar visita</button>');
   if ($('addF')) $('addF').onclick = () => {
     $('faltas').insertAdjacentHTML('beforeend', bloqueFalta());
@@ -532,19 +532,19 @@ function catalogo() {
       ${admin ? `<td class="acc"><button type="button" data-ed="${esc(c.codigo)}">Editar</button>${c.activo
         ? `<button type="button" class="danger" data-baja="${esc(c.codigo)}">${c.usos ? 'Dar de baja' : 'Eliminar'}</button>`
         : `<button type="button" data-alta="${esc(c.codigo)}">Reactivar</button>`}</td>` : ''}</tr>`;
-  const m = modal('Catálogo de faltas', `
+  const m = modal('Tipos de faltas', `
     <div class="row cat-bar">
-      <input id="cQ" type="search" placeholder="Buscar código, rubro o falta" value="${esc(catFiltro)}" aria-label="Buscar en el catálogo">
+      <input id="cQ" type="search" placeholder="Buscar código, rubro o falta" value="${esc(catFiltro)}" aria-label="Buscar tipos de faltas">
       ${admin ? `<label class="row chk"><input type="checkbox" id="cBajas" ${catBajas ? 'checked' : ''}> Ver dados de baja (${nBajas})</label>
-      <button type="button" class="pri" id="cNuevo">+ Nuevo código</button>` : ''}
+      <button type="button" class="pri" id="cNuevo">+ Nuevo tipo de falta</button>` : ''}
     </div>
     <div class="scroll"><table class="cat"><thead><tr><th>Código</th><th>Rubro</th><th>Falta</th><th>Penalidad</th><th class="cnt" title="Faltas cargadas con este código">Usos</th>${admin ? '<th></th>' : ''}</tr></thead><tbody>
-    ${cs.map(fila).join('') || `<tr><td colspan="${admin ? 6 : 5}" class="empty">${q ? 'Ningún código coincide con la búsqueda.' : 'El catálogo está vacío.'}</td></tr>`}
+    ${cs.map(fila).join('') || `<tr><td colspan="${admin ? 6 : 5}" class="empty">${q ? 'Ningún código coincide con la búsqueda.' : 'No hay tipos de faltas cargados.'}</td></tr>`}
     </tbody></table></div>
     ${admin ? `<details><summary class="sum">Importar desde la planilla</summary>
       <div class="f"><label for="cImp">Pegá las columnas Código, Rubro, Falta, Norma, Artículo, Penalidad (con el encabezado). Los códigos que ya existen se actualizan.</label><textarea id="cImp" rows="6" class="mono"></textarea></div>
       <div class="row"><label class="row chk"><input type="checkbox" id="cDel"> Quitar los códigos de ejemplo</label><button type="button" class="pri" id="cGo">Importar</button></div></details>
-      <details id="cHistD"><summary class="sum">Historial de cambios del catálogo</summary><div id="cHist" class="note">Cargando…</div></details>` : '<p class="note">Solo un administrador puede modificar el catálogo.</p>'}
+      <details id="cHistD"><summary class="sum">Historial de cambios de los tipos de faltas</summary><div id="cHist" class="note">Cargando…</div></details>` : '<p class="note">Solo un administrador puede modificar los tipos de faltas.</p>'}
   `);
   m.querySelector('.dlg').classList.add('ancho');
   let tq = 0;
@@ -586,7 +586,7 @@ function catalogo() {
 function formCodigo(c) {
   const nuevo = !c; c = c || {visible: 1};
   const rubros = [...new Set(Object.values(S.cat).map(x => x.rubro).filter(Boolean))].sort();
-  modal(nuevo ? 'Nuevo código de falta' : 'Editar ' + c.codigo, `
+  modal(nuevo ? 'Nuevo tipo de falta' : 'Editar ' + c.codigo, `
     <div class="grid2">
       <div class="f"><label for="kC">Código</label><input id="kC" class="mono" maxlength="10" value="${esc(c.codigo || '')}" ${nuevo ? 'required' : 'disabled'} placeholder="Ej.: RES-04"></div>
       <div class="f"><label for="kR">Rubro</label><input id="kR" list="kRl" maxlength="80" value="${esc(c.rubro || '')}" placeholder="Elegí o escribí uno nuevo"><datalist id="kRl">${rubros.map(r => `<option value="${esc(r)}">`).join('')}</datalist></div>
@@ -621,7 +621,7 @@ function confirmarBaja(c) {
     <p class="ftxt"><b>${esc(c.codigo)}</b> · ${esc(c.falta)}</p>
     <p class="ftxt">${usado
       ? `Tiene ${c.usos} ${c.usos === 1 ? 'falta cargada' : 'faltas cargadas'}, así que no se borra: deja de ofrecerse al cargar visitas y las faltas existentes conservan su descripción. Se puede reactivar cuando quieras.`
-      : 'Nunca se usó, así que se elimina del catálogo.'}</p>
+      : 'Nunca se usó, así que se elimina de la lista.'}</p>
   `, `<button type="button" id="bCancel">Cancelar</button><button type="button" class="danger" id="bOk">${usado ? 'Dar de baja' : 'Eliminar'}</button>`);
   $('bCancel').onclick = catalogo;
   $('bOk').onclick = async () => {
@@ -645,7 +645,7 @@ async function cargar() {
   S.usuarios = {}; d.usuarios.forEach(u => { S.usuarios[u.id] = u; });
   GRUPOS = {}; d.grupos.forEach(g => { GRUPOS[g.uf] = String(g.ufs).split(',').map(Number); });
   const b = $('banner');
-  if (!Object.values(S.cat).some(c => c.activo)) { b.hidden = false; b.textContent = 'El catálogo está vacío. Un administrador tiene que cargarlo.'; }
+  if (!Object.values(S.cat).some(c => c.activo)) { b.hidden = false; b.textContent = 'No hay tipos de faltas cargados. Un administrador tiene que cargarlos en Tipos de faltas.'; }
   else b.hidden = true;
   render();
 }

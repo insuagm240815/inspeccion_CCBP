@@ -228,7 +228,7 @@ async def api_visita(req: Request):
             for i, fa in enumerate(faltas):
                 cat = fila(c, "SELECT codigo FROM catalogo_falta WHERE codigo=%s AND activo", (str(fa.get("codigo"))[:10],))
                 if not cat:
-                    raise HTTPException(400, f"El código {fa.get('codigo')} no está en el catálogo.")
+                    raise HTTPException(400, f"El código {fa.get('codigo')} no existe o está dado de baja.")
                 estado = fa.get("estado") if fa.get("estado") in ESTADOS else "Pendiente"
                 cerr = estado in CERRADOS
                 rev = None if cerr else _fecha(fa.get("revision"), "fecha de revisión", True)

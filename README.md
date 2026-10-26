@@ -88,10 +88,10 @@ El tráfico pasa por Cloudflare cifrado, pero los datos no se almacenan ahí.
 | Ver logs | `docker compose logs -f api` |
 | Actualizar la app | `git pull`, `docker compose up -d --build` y aplicar las migraciones nuevas de `db/migraciones/` (ver abajo) |
 
-**Catálogo (ABM, solo admin):** en *Catálogo* se busca, se crea (*+ Nuevo código*), se edita y se da de baja cada código.
+**Tipos de faltas (ABM, solo admin):** en el menú *Tipos de faltas* se busca, se crea (*+ Nuevo tipo de falta*), se edita y se da de baja cada código.
 - Un código **sin faltas cargadas** se elimina; uno **con faltas** se da de baja: deja de ofrecerse en el recorrido pero las faltas existentes conservan su descripción, y se puede reactivar.
 - *Ofrecerlo al cargar faltas en el recorrido* permite ocultar un código sin darlo de baja.
-- Cada alta, baja y modificación queda en *Historial de cambios del catálogo* (tabla `catalogo_log`) con usuario y fecha.
+- Cada alta, baja y modificación queda en *Historial de cambios de los tipos de faltas* (tabla `catalogo_log`) con usuario y fecha.
 - Para la carga inicial: *Importar desde la planilla*, pegando las columnas Código, Rubro, Falta, Norma, Artículo, Penalidad, y tildando "Quitar los códigos de ejemplo".
 
 **U.F. y Pilar:** `02_datos_base.sql` arma los grupos a partir del plano: cada lote dibujado es un Pilar. Si se carga la pestaña "U.F. y Pilar" real en la tabla `uf_pilar`, la reiterancia pasa a calcularse con los grupos reales.
