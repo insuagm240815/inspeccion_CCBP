@@ -369,7 +369,7 @@ async function agregarFotos(fd, grupo, files) { for (const f of files) fd.append
 /* ───────── nueva visita ───────── */
 function opcionesCat(sel) {
   const porRubro = {};
-  Object.values(S.cat).filter(c => c.activo).forEach(c => { (porRubro[c.rubro] = porRubro[c.rubro] || []).push(c); });
+  Object.values(S.cat).filter(c => c.activo && c.visible !== 0).forEach(c => { (porRubro[c.rubro] = porRubro[c.rubro] || []).push(c); });
   return '<option value="">Elegí el tipo de falta…</option>' + Object.keys(porRubro).sort().map(r => `<optgroup label="${esc(r)}">${porRubro[r].sort((a, b) => a.codigo.localeCompare(b.codigo)).map(c => `<option value="${esc(c.codigo)}" ${c.codigo === sel ? 'selected' : ''}>${esc(c.codigo)} · ${esc(c.falta)}${/^EJ-/.test(c.codigo) ? ' (ejemplo)' : ''}</option>`).join('')}</optgroup>`).join('');
 }
 const opts = (arr, sel) => arr.map(x => `<option ${x === sel ? 'selected' : ''}>${esc(x)}</option>`).join('');
@@ -515,18 +515,57 @@ function agenda() {
 $('bAgenda').onclick = agenda;
 
 /* ───────── catálogo ───────── */
+/* Catálogo: todos lo pueden ver; el admin hace el ABM (alta, baja y modificación) y la importación desde la planilla. */
+let catFiltro = '', catBajas = false;
 function catalogo() {
-  const cs = Object.values(S.cat).filter(c => c.activo).sort((a, b) => (a.rubro || '').localeCompare(b.rubro || '') || a.codigo.localeCompare(b.codigo));
   const admin = puede('admin');
-  modal('Catálogo de faltas', `
-    <p class="note">${admin ? 'Podés pegar el catálogo copiado de la planilla. Los códigos que ya existen se actualizan.' : 'Solo un administrador puede cambiar el catálogo.'}</p>
-    <div class="scroll"><table class="cat"><thead><tr><th>Código</th><th>Rubro</th><th>Falta</th><th>Penalidad</th></tr></thead><tbody>
-    ${cs.map(c => `<tr><td class="mono">${esc(c.codigo)}${/^EJ-/.test(c.codigo) ? '<span class="tag-ej">EJEMPLO</span>' : ''}</td><td>${esc(c.rubro)}</td><td>${esc(c.falta)}</td><td>${esc(c.penalidad || '—')}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">El catálogo está vacío.</td></tr>'}
+  const q = catFiltro.toLowerCase();
+  const cs = Object.values(S.cat)
+    .filter(c => c.activo || (admin && catBajas))
+    .filter(c => !q || [c.codigo, c.rubro, c.falta, c.norma].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => (a.rubro || '').localeCompare(b.rubro || '') || a.codigo.localeCompare(b.codigo));
+  const nBajas = Object.values(S.cat).filter(c => !c.activo).length;
+  const fila = c => `<tr class="${c.activo ? '' : 'baja'}">
+      <td class="mono">${esc(c.codigo)}${/^EJ-/.test(c.codigo) ? '<span class="tag-ej">EJEMPLO</span>' : ''}${c.activo ? '' : '<span class="tag-baja">BAJA</span>'}</td>
+      <td>${esc(c.rubro)}</td><td>${esc(c.falta)}${c.visible === 0 ? '<br><span class="note">No se ofrece en el recorrido</span>' : ''}</td>
+      <td>${esc(c.penalidad || '—')}</td><td class="cnt">${c.usos || 0}</td>
+      ${admin ? `<td class="acc"><button type="button" data-ed="${esc(c.codigo)}">Editar</button>${c.activo
+        ? `<button type="button" class="danger" data-baja="${esc(c.codigo)}">${c.usos ? 'Dar de baja' : 'Eliminar'}</button>`
+        : `<button type="button" data-alta="${esc(c.codigo)}">Reactivar</button>`}</td>` : ''}</tr>`;
+  const m = modal('Catálogo de faltas', `
+    <div class="row cat-bar">
+      <input id="cQ" type="search" placeholder="Buscar código, rubro o falta" value="${esc(catFiltro)}" aria-label="Buscar en el catálogo">
+      ${admin ? `<label class="row chk"><input type="checkbox" id="cBajas" ${catBajas ? 'checked' : ''}> Ver dados de baja (${nBajas})</label>
+      <button type="button" class="pri" id="cNuevo">+ Nuevo código</button>` : ''}
+    </div>
+    <div class="scroll"><table class="cat"><thead><tr><th>Código</th><th>Rubro</th><th>Falta</th><th>Penalidad</th><th class="cnt" title="Faltas cargadas con este código">Usos</th>${admin ? '<th></th>' : ''}</tr></thead><tbody>
+    ${cs.map(fila).join('') || `<tr><td colspan="${admin ? 6 : 5}" class="empty">${q ? 'Ningún código coincide con la búsqueda.' : 'El catálogo está vacío.'}</td></tr>`}
     </tbody></table></div>
-    ${admin ? `<div class="f"><label for="cImp">Pegá las columnas Código, Rubro, Falta, Norma, Artículo, Penalidad (con el encabezado)</label><textarea id="cImp" rows="6" class="mono"></textarea></div>
-      <div class="row"><label class="row"><input type="checkbox" id="cDel"> Quitar los códigos de ejemplo</label><button type="button" class="pri" id="cGo">Importar</button></div>` : ''}
+    ${admin ? `<details><summary class="sum">Importar desde la planilla</summary>
+      <div class="f"><label for="cImp">Pegá las columnas Código, Rubro, Falta, Norma, Artículo, Penalidad (con el encabezado). Los códigos que ya existen se actualizan.</label><textarea id="cImp" rows="6" class="mono"></textarea></div>
+      <div class="row"><label class="row chk"><input type="checkbox" id="cDel"> Quitar los códigos de ejemplo</label><button type="button" class="pri" id="cGo">Importar</button></div></details>
+      <details id="cHistD"><summary class="sum">Historial de cambios del catálogo</summary><div id="cHist" class="note">Cargando…</div></details>` : '<p class="note">Solo un administrador puede modificar el catálogo.</p>'}
   `);
+  m.querySelector('.dlg').classList.add('ancho');
+  let tq = 0;
+  $('cQ').oninput = e => { clearTimeout(tq); tq = setTimeout(() => { catFiltro = e.target.value; const pos = e.target.selectionStart; catalogo(); const i = $('cQ'); i.focus(); try { i.setSelectionRange(pos, pos); } catch (x) {} }, 250); };
   if (!admin) return;
+  $('cBajas').onchange = e => { catBajas = e.target.checked; catalogo(); };
+  $('cNuevo').onclick = () => formCodigo(null);
+  m.querySelectorAll('[data-ed]').forEach(b => { b.onclick = () => formCodigo(S.cat[b.dataset.ed]); });
+  m.querySelectorAll('[data-alta]').forEach(b => { b.onclick = async () => {
+    const c = S.cat[b.dataset.alta];
+    try { busy('Guardando…'); await api('/catalogo/codigos/' + encodeURIComponent(c.codigo), {method: 'PUT', json: Object.assign({}, c, {activo: true})});
+      busy(''); toast(c.codigo + ' reactivado'); await cargar(); catalogo(); } catch (e) { busy(''); error(e); }
+  }; });
+  m.querySelectorAll('[data-baja]').forEach(b => { b.onclick = () => confirmarBaja(S.cat[b.dataset.baja]); });
+  $('cHistD').ontoggle = async e => {
+    if (!e.target.open) return;
+    try {
+      const h = await api('/catalogo/historial');
+      $('cHist').innerHTML = h.length ? `<div class="timeline">${h.map(x => `<div><span class="d">${esc(x.fecha.replace('T', ' ').slice(0, 16))} · ${esc(x.usuario)}</span><br><b>${esc(x.codigo)}</b> — ${esc(x.accion)}${x.detalle ? ': ' + esc(x.detalle) : ''}</div>`).join('')}</div>` : 'Todavía no hay cambios registrados.';
+    } catch (x) { $('cHist').textContent = 'No se pudo cargar el historial.'; }
+  };
   $('cGo').onclick = async () => {
     const lineas = $('cImp').value.split(/\r?\n/).filter(x => x.trim());
     if (lineas.length < 2) { toast('Pegá el encabezado y al menos una fila.', true); return; }
@@ -541,6 +580,55 @@ function catalogo() {
       busy(`Importando ${filas.length} códigos…`);
       const r = await api('/catalogo', {method: 'POST', json: {filas, quitar_ejemplos: $('cDel').checked}});
       busy(''); toast(r.guardados + ' códigos importados'); await cargar(); catalogo();
+    } catch (e) { busy(''); error(e); }
+  };
+}
+function formCodigo(c) {
+  const nuevo = !c; c = c || {visible: 1};
+  const rubros = [...new Set(Object.values(S.cat).map(x => x.rubro).filter(Boolean))].sort();
+  modal(nuevo ? 'Nuevo código de falta' : 'Editar ' + c.codigo, `
+    <div class="grid2">
+      <div class="f"><label for="kC">Código</label><input id="kC" class="mono" maxlength="10" value="${esc(c.codigo || '')}" ${nuevo ? 'required' : 'disabled'} placeholder="Ej.: RES-04"></div>
+      <div class="f"><label for="kR">Rubro</label><input id="kR" list="kRl" maxlength="80" value="${esc(c.rubro || '')}" placeholder="Elegí o escribí uno nuevo"><datalist id="kRl">${rubros.map(r => `<option value="${esc(r)}">`).join('')}</datalist></div>
+    </div>
+    <div class="f"><label for="kF">Falta</label><input id="kF" maxlength="250" value="${esc(c.falta || '')}" required placeholder="Descripción que ve el inspector al elegirla"></div>
+    <div class="f"><label for="kO">Qué observar</label><textarea id="kO" rows="2" maxlength="2000" placeholder="Opcional: criterio para el inspector">${esc(c.que_observar || '')}</textarea></div>
+    <div class="grid2">
+      <div class="f"><label for="kN">Norma</label><input id="kN" maxlength="150" value="${esc(c.norma || '')}" placeholder="Ej.: Reglamento interno"></div>
+      <div class="f"><label for="kA">Artículo</label><input id="kA" maxlength="40" value="${esc(c.articulo || '')}"></div>
+    </div>
+    <div class="f"><label for="kP">Penalidad</label><input id="kP" maxlength="150" value="${esc(c.penalidad || '')}"></div>
+    <label class="row chk"><input type="checkbox" id="kV" ${c.visible === 0 ? '' : 'checked'}> Ofrecerlo al cargar faltas en el recorrido</label>
+    ${!nuevo && c.usos ? `<p class="note">Este código tiene ${c.usos} ${c.usos === 1 ? 'falta cargada' : 'faltas cargadas'}. Si cambiás la descripción, se ve la nueva también en esas faltas.</p>` : ''}
+  `, '<button type="button" id="kCancel">Cancelar</button><button type="button" class="pri" id="kOk">Guardar</button>');
+  $('kCancel').onclick = catalogo;
+  $('kOk').onclick = async () => {
+    const d = {codigo: $('kC').value.trim().toUpperCase(), rubro: $('kR').value.trim(), falta: $('kF').value.trim(), que_observar: $('kO').value.trim(),
+      norma: $('kN').value.trim(), articulo: $('kA').value.trim(), penalidad: $('kP').value.trim(), visible: $('kV').checked};
+    if (nuevo && !d.codigo) { toast('Escribí el código.', true); return; }
+    if (!d.falta) { toast('Escribí la descripción de la falta.', true); return; }
+    try {
+      busy('Guardando…');
+      if (nuevo) await api('/catalogo/codigos', {method: 'POST', json: d});
+      else await api('/catalogo/codigos/' + encodeURIComponent(c.codigo), {method: 'PUT', json: d});
+      busy(''); toast(nuevo ? 'Código ' + d.codigo + ' creado' : c.codigo + ' actualizado'); await cargar(); catalogo();
+    } catch (e) { busy(''); error(e); }
+  };
+}
+function confirmarBaja(c) {
+  const usado = c.usos > 0;
+  modal((usado ? 'Dar de baja ' : 'Eliminar ') + c.codigo, `
+    <p class="ftxt"><b>${esc(c.codigo)}</b> · ${esc(c.falta)}</p>
+    <p class="ftxt">${usado
+      ? `Tiene ${c.usos} ${c.usos === 1 ? 'falta cargada' : 'faltas cargadas'}, así que no se borra: deja de ofrecerse al cargar visitas y las faltas existentes conservan su descripción. Se puede reactivar cuando quieras.`
+      : 'Nunca se usó, así que se elimina del catálogo.'}</p>
+  `, `<button type="button" id="bCancel">Cancelar</button><button type="button" class="danger" id="bOk">${usado ? 'Dar de baja' : 'Eliminar'}</button>`);
+  $('bCancel').onclick = catalogo;
+  $('bOk').onclick = async () => {
+    try {
+      busy('Guardando…');
+      const r = await api('/catalogo/codigos/' + encodeURIComponent(c.codigo), {method: 'DELETE'});
+      busy(''); toast(c.codigo + (r.resultado === 'baja' ? ' dado de baja' : ' eliminado')); await cargar(); catalogo();
     } catch (e) { busy(''); error(e); }
   };
 }

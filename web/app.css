@@ -163,3 +163,15 @@ table.cat th{font-size:12px;color:var(--muted)}
 .fotos .quitar{position:absolute;top:-8px;right:-8px;width:26px;height:26px;padding:0;border-radius:50%;font-size:15px;line-height:1;
   background:var(--surface);border:1px solid var(--line)}
 .fotos .cam{font-size:15px;padding:10px 16px}
+/* ───────── catálogo (ABM) ───────── */
+.cat-bar input[type=search]{flex:1;min-width:180px}
+.chk{gap:6px;font-size:13px;color:var(--muted);cursor:pointer}
+table.cat td.cnt,table.cat th.cnt{text-align:right;font-family:var(--f-mono)}
+table.cat td.acc{white-space:nowrap;text-align:right}
+table.cat td.acc button{padding:4px 9px;font-size:12.5px;margin-left:4px}
+table.cat tr.baja td{opacity:.55}
+.tag-baja{font:500 10.5px var(--f-mono);color:var(--danger);border:1px solid var(--danger);border-radius:3px;padding:0 4px;margin-left:6px}
+.sum{cursor:pointer;font-weight:500;padding:4px 0}
+details[open] .sum{margin-bottom:8px}
+.dlg.ancho{max-width:980px}
+table.cat td.mono{white-space:nowrap}

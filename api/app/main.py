@@ -1,5 +1,6 @@
 """API de la Base de Inspección CCBP."""
 import asyncio
+import re
 import datetime as dt
 import json
 import threading
@@ -151,7 +152,9 @@ def api_estado(req: Request):
                                      FROM historial x LEFT JOIN hallazgo h ON h.nro_hallazgo = x.nro_registro
                                      LEFT JOIN visita v ON v.nro_visita = h.nro_visita ORDER BY x.id_historial"""),
             "fotos": filas(c, "SELECT nro_foto n, nro_registro reg, nro_visita visita, fecha, momento FROM foto"),
-            "catalogo": filas(c, """SELECT c.codigo, r.nombre rubro, c.falta, c.norma, c.articulo, c.penalidad, c.activo
+            "catalogo": filas(c, """SELECT c.codigo, r.nombre rubro, c.falta, c.que_observar, c.norma, c.articulo, c.penalidad,
+                                    c.visible_recorrido visible, c.activo,
+                                    (SELECT COUNT(*) FROM hallazgo h WHERE h.codigo = c.codigo) usos
                                     FROM catalogo_falta c JOIN rubro r ON r.id_rubro = c.id_rubro"""),
             "usuarios": filas(c, "SELECT id_usuario id, nombre FROM usuario"),
             "grupos": filas(c, """SELECT a.nro_uf uf, GROUP_CONCAT(DISTINCT b.nro_uf) ufs FROM uf_pilar a
@@ -398,3 +401,115 @@ async def api_catalogo(req: Request):
     r = await run_in_threadpool(tx)
     cambio()
     return r
+
+
+# ───────── ABM del catálogo (solo admin) ─────────
+CODIGO_OK = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,9}$")
+
+
+def _cat_log(c, codigo, accion, detalle, uid):
+    ejecutar(c, "INSERT INTO catalogo_log (codigo,accion,detalle,id_usuario) VALUES (%s,%s,%s,%s)",
+             (codigo, accion, detalle[:500], uid))
+
+
+def _datos_cat(d):
+    falta = _texto(d.get("falta"), 250)
+    if not falta:
+        raise HTTPException(400, "Escribí la descripción de la falta.")
+    return {
+        "rubro": _texto(d.get("rubro"), 80) or "Sin rubro", "falta": falta,
+        "que_observar": _texto(d.get("que_observar"), 2000), "norma": _texto(d.get("norma"), 150),
+        "articulo": _texto(d.get("articulo"), 40), "penalidad": _texto(d.get("penalidad"), 150),
+        "visible": d.get("visible", True) is not False,
+    }
+
+
+def _rubro_id(c, nombre):
+    ejecutar(c, "INSERT IGNORE INTO rubro (nombre) VALUES (%s)", (nombre,))
+    return fila(c, "SELECT id_rubro FROM rubro WHERE nombre=%s", (nombre,))["id_rubro"]
+
+
+@app.post("/api/catalogo/codigos")
+async def api_cat_alta(req: Request):
+    u = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        cod = _texto(d.get("codigo"), 10).upper()
+        if not CODIGO_OK.match(cod):
+            raise HTTPException(400, "El código tiene que tener de 1 a 10 caracteres: letras, números, punto, guion o barra.")
+        x = _datos_cat(d)
+        with conexion() as c:
+            if fila(c, "SELECT 1 e FROM catalogo_falta WHERE codigo=%s", (cod,)):
+                raise HTTPException(409, f"El código {cod} ya existe. Editalo en lugar de crearlo.")
+            ejecutar(c, """INSERT INTO catalogo_falta (codigo,id_rubro,falta,que_observar,norma,articulo,penalidad,visible_recorrido,activo)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,TRUE)""",
+                     (cod, _rubro_id(c, x["rubro"]), x["falta"], x["que_observar"], x["norma"], x["articulo"], x["penalidad"], x["visible"]))
+            _cat_log(c, cod, "alta", f"{x['rubro']} · {x['falta']}", u["id_usuario"])
+        return {"ok": True, "codigo": cod}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+@app.put("/api/catalogo/codigos/{codigo}")
+async def api_cat_modif(codigo: str, req: Request):
+    u = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        x = _datos_cat(d)
+        with conexion() as c:
+            antes = fila(c, """SELECT r.nombre rubro, c.falta, c.que_observar, c.norma, c.articulo, c.penalidad,
+                               c.visible_recorrido visible, c.activo FROM catalogo_falta c
+                               JOIN rubro r ON r.id_rubro=c.id_rubro WHERE c.codigo=%s""", (codigo[:10],))
+            if not antes:
+                raise HTTPException(404, f"No existe el código {codigo}.")
+            activo = antes["activo"] if d.get("activo") is None else bool(d.get("activo"))
+            ejecutar(c, """UPDATE catalogo_falta SET id_rubro=%s, falta=%s, que_observar=%s, norma=%s, articulo=%s,
+                           penalidad=%s, visible_recorrido=%s, activo=%s WHERE codigo=%s""",
+                     (_rubro_id(c, x["rubro"]), x["falta"], x["que_observar"], x["norma"], x["articulo"], x["penalidad"],
+                      x["visible"], activo, codigo[:10]))
+            cambios = [k for k in x if str(x[k] or "") != str(antes.get(k) or "") and not (k == "visible" and bool(x[k]) == bool(antes[k]))]
+            if bool(activo) != bool(antes["activo"]):
+                cambios.append("reactivado" if activo else "dado de baja")
+            _cat_log(c, codigo[:10], "modificación", ", ".join(cambios) or "sin cambios", u["id_usuario"])
+        return {"ok": True}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+@app.delete("/api/catalogo/codigos/{codigo}")
+async def api_cat_baja(codigo: str, req: Request):
+    """Si el código nunca se usó, se elimina. Si ya tiene faltas cargadas, se da de baja (deja de ofrecerse
+    al cargar visitas) pero se conserva, para que el historial de esas faltas siga teniendo su descripción."""
+    u = await run_in_threadpool(exigir, req, "admin", True)
+
+    def tx():
+        with conexion() as c:
+            cat = fila(c, "SELECT codigo FROM catalogo_falta WHERE codigo=%s", (codigo[:10],))
+            if not cat:
+                raise HTTPException(404, f"No existe el código {codigo}.")
+            usos = fila(c, "SELECT COUNT(*) n FROM hallazgo WHERE codigo=%s", (cat["codigo"],))["n"]
+            if usos:
+                ejecutar(c, "UPDATE catalogo_falta SET activo=FALSE WHERE codigo=%s", (cat["codigo"],))
+                _cat_log(c, cat["codigo"], "baja", f"dado de baja (tiene {usos} faltas cargadas)", u["id_usuario"])
+                return {"ok": True, "resultado": "baja", "usos": usos}
+            ejecutar(c, "DELETE FROM catalogo_falta WHERE codigo=%s", (cat["codigo"],))
+            _cat_log(c, cat["codigo"], "eliminado", "sin faltas cargadas", u["id_usuario"])
+            return {"ok": True, "resultado": "eliminado", "usos": 0}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+@app.get("/api/catalogo/historial")
+def api_cat_historial(req: Request):
+    exigir(req, "admin")
+    with conexion() as c:
+        return filas(c, """SELECT l.fecha, l.codigo, l.accion, l.detalle, u.nombre usuario FROM catalogo_log l
+                           JOIN usuario u ON u.id_usuario=l.id_usuario ORDER BY l.id DESC LIMIT 200""")

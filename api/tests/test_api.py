@@ -177,3 +177,42 @@ def test_consulta_gestiona_faltas(usuarios):
 
     assert est(ins, "Resuelto").status_code == 200                       # el inspector sí cierra
     assert est(con, "Notificado/Intimado").status_code == 403            # cerrada: consulta no la reabre
+
+
+def test_abm_catalogo(usuarios):
+    import json
+    adm, ins = cliente(usuarios["admin"]), cliente(usuarios["inspector"])
+    cod = ("Z" + SUF[:5]).upper()
+    nuevo = {"codigo": cod, "rubro": "Rubro de prueba", "falta": "Falta de prueba", "norma": "Reglamento", "penalidad": "Multa"}
+    # solo admin
+    assert ins.post("/api/catalogo/codigos", json=nuevo, headers=H).status_code == 403
+    assert adm.post("/api/catalogo/codigos", json=nuevo).status_code == 403                      # sin encabezado
+    # alta, duplicado, validación
+    assert adm.post("/api/catalogo/codigos", json=nuevo, headers=H).status_code == 200
+    assert adm.post("/api/catalogo/codigos", json=nuevo, headers=H).status_code == 409
+    assert adm.post("/api/catalogo/codigos", json=dict(nuevo, codigo="MAL COD!"), headers=H).status_code == 400
+    # modificación
+    r = adm.put(f"/api/catalogo/codigos/{cod}", json=dict(nuevo, falta="Falta corregida", visible=False), headers=H)
+    assert r.status_code == 200
+    c = next(x for x in adm.get("/api/estado").json()["catalogo"] if x["codigo"] == cod)
+    assert c["falta"] == "Falta corregida" and c["visible"] == 0 and c["activo"] == 1
+    # usarlo en una falta → la baja no borra, desactiva
+    with conexion() as cx:
+        hoy = str(fila(cx, "SELECT CURDATE() d")["d"])
+    r = ins.post("/api/visitas", data={"datos": json.dumps({"uf": 50, "fecha": hoy, "faltas": [{"codigo": cod}]})}, headers=H)
+    assert r.status_code == 200, r.text
+    r = adm.delete(f"/api/catalogo/codigos/{cod}", headers=H)
+    assert r.json()["resultado"] == "baja" and r.json()["usos"] == 1
+    r = ins.post("/api/visitas", data={"datos": json.dumps({"uf": 50, "fecha": hoy, "faltas": [{"codigo": cod}]})}, headers=H)
+    assert r.status_code == 400                                                                   # dado de baja: no se ofrece
+    # reactivar
+    assert adm.put(f"/api/catalogo/codigos/{cod}", json=dict(nuevo, activo=True), headers=H).status_code == 200
+    # un código sin usos se elimina
+    cod2 = cod[:-1] + "Y"
+    adm.post("/api/catalogo/codigos", json=dict(nuevo, codigo=cod2), headers=H)
+    assert adm.delete(f"/api/catalogo/codigos/{cod2}", headers=H).json()["resultado"] == "eliminado"
+    # historial
+    h = adm.get("/api/catalogo/historial").json()
+    acciones = {x["accion"] for x in h if x["codigo"] in (cod, cod2)}
+    assert {"alta", "modificación", "baja", "eliminado"} <= acciones
+    assert ins.get("/api/catalogo/historial").status_code == 403

@@ -82,6 +82,17 @@ CREATE TABLE acceso_log (
   resultado    ENUM('ok','clave','bloqueado','inactivo') NOT NULL
 ) ENGINE=InnoDB;
 
+CREATE TABLE catalogo_log (                                -- ABM del catálogo: quién, cuándo, qué
+  id          BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  fecha       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  codigo      VARCHAR(10) NOT NULL,
+  accion      ENUM('alta','modificación','baja','eliminado') NOT NULL,
+  detalle     VARCHAR(500),
+  id_usuario  INT UNSIGNED NOT NULL,
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
+  INDEX ix_catalogo_log_codigo (codigo, fecha)
+) ENGINE=InnoDB;
+
 CREATE TABLE secuencia (                                  -- numeración V-, F-, P- con bloqueo de fila
   prefijo  VARCHAR(2) PRIMARY KEY,
   ultimo   INT UNSIGNED NOT NULL DEFAULT 0
