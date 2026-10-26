@@ -294,7 +294,8 @@ def test_novedades_espacios_comunes(usuarios):
     ins, con, sup = cliente(usuarios["inspector"]), cliente(usuarios["consulta"]), cliente(usuarios["supervisor"])
     area = [[1000, 1000], [1100, 1000], [1100, 1100]]
     datos = {"forma": "A", "geo": area, "tipo": "Pasto alto / falta de limpieza", "descripcion": "Plaza central sin cortar",
-             "lugar": "Plaza", "estado": "Relevado", "revision": "2099-01-01", "sector": "II", "lat": -34.6, "lon": -58.86}
+             "lugar": "Plaza", "estado": "Relevado", "revision": "2099-01-01", "sector": "II",
+             "lat": -34.6019, "lon": -58.8607, "ubicacion": "GPS", "prec": "7"}
     # consulta no da de alta; dibujo inválido rechazado
     assert con.post("/api/marcas", data={"datos": json.dumps(datos)}, headers=H).status_code == 403
     malo = dict(datos, geo=area[:2])
@@ -304,10 +305,12 @@ def test_novedades_espacios_comunes(usuarios):
     n = r.json()["n"]
     m = next(x for x in ins.get("/api/estado").json()["marcas"] if x["n"] == n)
     assert m["forma"] == "Área" and m["geo"] == area and m["sector"] == "Sector II" and m["estado"] == "Relevado"
+    assert float(m["lat"]) == pytest.approx(-34.6019) and m["ubic"] == "GPS" and m["prec"] == 7
 
     # edición y redibujo (inspector); consulta no edita
     assert con.put(f"/api/marcas/{n}", json={"descripcion": "x"}, headers=H).status_code == 403
-    r = ins.put(f"/api/marcas/{n}", json={"descripcion": "Plaza central, pasto de 40 cm", "forma": "P", "geo": [[1050, 1050]]}, headers=H)
+    r = ins.put(f"/api/marcas/{n}", json={"descripcion": "Plaza central, pasto de 40 cm", "forma": "P", "geo": [[1050, 1050]],
+                                          "lat": -34.6020, "lon": -58.8608, "ubicacion": "Plano", "prec": "5"}, headers=H)
     assert r.status_code == 200, r.text
 
     # consulta gestiona solo estados intermedios
@@ -319,6 +322,7 @@ def test_novedades_espacios_comunes(usuarios):
     est = ins.get("/api/estado").json()
     m = next(x for x in est["marcas"] if x["n"] == n)
     assert m["forma"] == "Punto" and m["estado"] == "Reparado" and m["cierre"] and not m["revision"]
+    assert m["ubic"] == "Plano" and m["prec"] is None and float(m["lon"]) == pytest.approx(-58.8608)
     hist = [x["cambio"] for x in est["historial"] if x["reg"] == n]
     assert hist[0].startswith("Alta en plaza") and hist[1].startswith("Editada") and len(hist) == 4
 

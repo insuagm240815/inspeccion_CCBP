@@ -182,8 +182,15 @@ Menú **Reportes**, disponible para consulta, inspector, supervisor y admin.
 El botón del lápiz (✎), sobre el plano, sirve para marcar problemas en calles, plazas, peatonales y otros espacios comunes. Lo ven el inspector, el supervisor y el admin.
 
 1. Tocar ✎ y elegir **Punto** (un bache, una luminaria), **Línea** (un tramo de calle o de cerco) o **Área** (una plaza, un espacio verde).
-2. Tocar el plano para ubicarla. Arrastrar sigue moviendo el plano. **📍 Mi ubicación** usa el GPS del celular. **Deshacer** borra el último punto y Esc cancela.
+2. Ubicarla de una de estas formas:
+   - Tocando el plano. Arrastrar sigue moviendo el plano.
+   - Con **📍 Mi ubicación**, que pone un punto donde está parado el inspector.
+   - Con **🚶 Grabar recorrido** (solo en Línea y Área): se camina el tramo o el contorno y la app agrega un punto cada 5 m. Descarta las lecturas con precisión peor que ±30 m.
+
+   Al tocar ✎, el GPS se enciende solo y la barra muestra la precisión. **Deshacer** borra el último punto y Esc cancela.
 3. Completar el tipo, el lugar, la descripción, la fecha de revisión y las fotos.
+
+Cada novedad guarda la latitud y la longitud del centro del dibujo y cómo se ubicó: **GPS** (con la precisión en metros) o **ubicada en el plano** (con la calibración del plano, error de ±15 m). La ficha muestra las coordenadas, un enlace **Abrir en el mapa** (Google Maps, para llegar al lugar) y **Ver en el plano**. El GPS necesita que la app se abra por HTTPS, como pasa en Codespaces, Railway y Cloudflare.
 
 Cada novedad recibe un número M-0001 y se ve en el plano con un color según su estado: Relevado (naranja), Informado a mantenimiento (amarillo), En reparación (azul) y cerrada (verde tenue). Al tocarla se abre la ficha, con historial y fotos. Las abiertas aparecen en **Agenda → Espacios comunes**.
 

@@ -203,7 +203,11 @@ function aPlano(lat, lon) {
   const E = (lon - CAL.lon0) * CAL.kx - CAL.tx, N = (lat - CAL.lat0) * CAL.ky - CAL.ty, d = CAL.a * CAL.a + CAL.b * CAL.b;
   return {x: (CAL.a * E + CAL.b * N) / d, y: (CAL.b * E - CAL.a * N) / d};
 }
-let POS = null, watchId = null, seguir = false;
+function aGeo(x, y) {   // inversa de aPlano: coordenada del plano → lat/lon
+  const E = CAL.a * x + CAL.b * y, N = CAL.b * x - CAL.a * y;
+  return {lat: +((N + CAL.ty) / CAL.ky + CAL.lat0).toFixed(6), lon: +((E + CAL.tx) / CAL.kx + CAL.lon0).toFixed(6)};
+}
+let POS = null, watchId = null, seguir = false, avisoGps = false;
 const acc = el('circle', {class: 'gps-acc', r: 0}, gGps), dot = el('circle', {class: 'gps-dot', r: 9}, gGps);
 gGps.style.display = 'none';
 function marcarGps() { $('bGps').classList.toggle('on', watchId != null && seguir); }
@@ -216,11 +220,11 @@ function loteEn(x, y) {
 }
 const posVigente = () => POS && Date.now() - POS.ts < 120000 ? POS : null;
 const metrosA = (i, p) => Math.round(Math.hypot(LOTS[i].c[0] - p.x, LOTS[i].c[1] - p.y) * M_POR_UNIDAD);
-function iniciarGps(centrarAlLlegar) {
+function iniciarGps(centrarAlLlegar, sinSeguir) {
   if (!('geolocation' in navigator)) { toast('Este navegador no tiene GPS disponible.', true); return; }
   if (!window.isSecureContext) { toast('El GPS solo funciona si la app se abre por HTTPS.', true); return; }
-  if (watchId != null) { seguir = true; marcarGps(); if (POS) centrar(POS.x, POS.y, Math.min(vb.w, 600)); return; }
-  seguir = true; let primera = true;
+  if (watchId != null) { if (sinSeguir) return; seguir = true; marcarGps(); if (POS) centrar(POS.x, POS.y, Math.min(vb.w, 600)); return; }
+  seguir = !sinSeguir; let primera = true;
   watchId = navigator.geolocation.watchPosition(p => {
     const {latitude: lat, longitude: lon, accuracy} = p.coords, q = aPlano(lat, lon);
     POS = {lat, lon, acc: Math.round(accuracy), x: q.x, y: q.y, ts: Date.now()};
@@ -230,9 +234,13 @@ function iniciarGps(centrarAlLlegar) {
     if (primera && centrarAlLlegar) { const i = loteEn(q.x, q.y); if (i >= 0) seleccionar(i); }
     if (seguir) centrar(q.x, q.y, primera ? 600 : vb.w);
     primera = false; marcarGps();
+    if (DIB) gpsDibujo();
   }, e => {
-    const m = e.code === 1 ? 'Sin permiso de ubicación. Habilitalo en el navegador para este sitio.' : 'No se pudo obtener la ubicación. Probá al aire libre.';
-    toast(m, true); navigator.geolocation.clearWatch(watchId); watchId = null; seguir = false; marcarGps();
+    // Sin permiso: se apaga. Sin señal o demora (pasa bajo árboles o techos): se sigue escuchando y solo se avisa si nunca hubo posición.
+    if (e.code === 1) {
+      toast('Sin permiso de ubicación. Habilitalo en el navegador para este sitio.', true);
+      navigator.geolocation.clearWatch(watchId); watchId = null; seguir = false; marcarGps(); if (DIB) { DIB.grabar = false; pintarDibujo(); }
+    } else if (!POS && !avisoGps) { avisoGps = true; toast('Todavía no hay señal GPS. Probá al aire libre.', true); }
   }, {enableHighAccuracy: true, maximumAge: 5000, timeout: 20000});
   marcarGps();
 }
@@ -681,16 +689,29 @@ let DIB = null;   // {forma, pts:[[x,y]], editar: n | null}
 function entrarDibujo(forma, editar) {
   if (!puede('inspector')) return;
   cerrarModal(); ocultarTip();
-  DIB = {forma: forma || 'P', pts: [], editar: editar || null};
+  DIB = {forma: forma || 'P', pts: [], editar: editar || null, gps: [], grabar: false};   // gps: precisión de cada vértice tomado con GPS (null = tocado en el plano)
+  if ('geolocation' in navigator && window.isSecureContext) iniciarGps(false, true);
   $('dibujo').hidden = false; $('bLapiz').classList.add('on'); svg.classList.add('dibujando');
   pintarDibujo();
 }
 function salirDibujo() { DIB = null; gDib.innerHTML = ''; $('dibujo').hidden = true; $('bLapiz').classList.remove('on'); svg.classList.remove('dibujando'); }
 function agregarPunto(e) {
   const p = aSvg(e.clientX, e.clientY), q = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
-  if (DIB.forma === 'P') DIB.pts = [q]; else DIB.pts.push(q);
+  ponerVertice(q, null);
+}
+function ponerVertice(q, prec) {
+  if (DIB.forma === 'P') { DIB.pts = [q]; DIB.gps = [prec]; } else { DIB.pts.push(q); DIB.gps.push(prec); }
   pintarDibujo();
   if (DIB.forma === 'P') terminarDibujo();
+}
+const GPS_MAX = 30, PASO_M = 5;   // precisión mínima aceptable (m) y separación entre vértices al grabar recorrido
+function gpsDibujo() {
+  const d = DIB, p = posVigente(); if (!d) return;
+  if (d.grabar && p && p.acc <= GPS_MAX) {
+    const u = d.pts[d.pts.length - 1];
+    if (!u || Math.hypot(u[0] - p.x, u[1] - p.y) * M_POR_UNIDAD >= PASO_M) { centrar(p.x, p.y, vb.w); ponerVertice([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10], p.acc); return; }
+  }
+  pintarDibujo();
 }
 function pintarDibujo() {
   gDib.innerHTML = '';
@@ -701,28 +722,43 @@ function pintarDibujo() {
     : `Tocá el plano para marcar ${d.forma === 'L' ? 'el recorrido' : 'el contorno'} (${d.pts.length} ${d.pts.length === 1 ? 'punto' : 'puntos'}${d.pts.length < min ? `, mínimo ${min}` : ''}).`;
   $('dibOk').hidden = d.forma === 'P'; $('dibOk').disabled = d.pts.length < min;
   $('dibUndo').hidden = d.forma === 'P'; $('dibUndo').disabled = !d.pts.length;
-  $('dibGps').hidden = !posVigente();
+  const p = posVigente();
+  $('dibGps').disabled = !p; $('dibRec').hidden = d.forma === 'P'; $('dibRec').disabled = !p;
+  $('dibRec').textContent = d.grabar ? '⏸ Pausar recorrido' : '🚶 Grabar recorrido'; $('dibRec').classList.toggle('on', d.grabar);
+  $('dibEst').textContent = watchId == null ? 'GPS apagado: ubicá la novedad tocando el plano.' : !p ? 'Buscando señal GPS…'
+    : `GPS ±${p.acc} m${p.acc > GPS_MAX ? ' · precisión baja, conviene ubicar a mano' : ''}${d.grabar ? ' · grabando: caminá el tramo' : ''}`;
+  $('dibEst').classList.toggle('lejos', !!p && p.acc > GPS_MAX);
   if (d.pts.length > 1) el(d.forma === 'A' ? 'polygon' : 'polyline', {points: d.pts.map(p => p.join(',')).join(' '), class: 'dib-' + d.forma}, gDib);
   d.pts.forEach(([x, y]) => el('circle', {cx: x, cy: y, r: 7, class: 'dib-v'}, gDib));
 }
 function terminarDibujo() {
   const d = DIB; if (!d) return;
-  const forma = d.forma, geo = d.pts.slice(), editar = d.editar;
+  const forma = d.forma, geo = d.pts.slice(), editar = d.editar, ub = ubicacionDe(geo, d.gps);
   salirDibujo();
-  if (editar) guardarRedibujo(editar, forma, geo); else formMarca(forma, geo);
+  if (editar) guardarRedibujo(editar, forma, geo, ub); else formMarca(forma, geo, ub);
 }
 document.querySelectorAll('[data-forma]').forEach(b => { b.onclick = () => { if (DIB) { DIB.forma = b.dataset.forma; DIB.pts = []; pintarDibujo(); } }; });
 $('bLapiz').onclick = () => DIB ? salirDibujo() : entrarDibujo('P');
 $('dibX').onclick = salirDibujo;
-$('dibUndo').onclick = () => { if (DIB) { DIB.pts.pop(); pintarDibujo(); } };
+$('dibUndo').onclick = () => { if (DIB) { DIB.pts.pop(); DIB.gps.pop(); pintarDibujo(); } };
+$('dibRec').onclick = () => { if (!DIB) return; DIB.grabar = !DIB.grabar; if (DIB.grabar) { const p = posVigente(); if (p) centrar(p.x, p.y, Math.min(vb.w, 500)); } gpsDibujo(); };
 $('dibOk').onclick = terminarDibujo;
-$('dibGps').onclick = () => { const p = posVigente(); if (!DIB || !p) return; const q = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
-  if (DIB.forma === 'P') { DIB.pts = [q]; terminarDibujo(); } else { DIB.pts.push(q); pintarDibujo(); } };
+$('dibGps').onclick = () => { const p = posVigente(); if (!DIB || !p) return;
+  if (p.acc > GPS_MAX) toast(`Precisión baja (±${p.acc} m): revisá que el punto quede bien ubicado.`, true);
+  centrar(p.x, p.y, Math.min(vb.w, 500)); ponerVertice([Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10], p.acc); };
+/* La novedad se georreferencia siempre por el centro del dibujo (calibración del plano, ±15 m).
+   Si todos los vértices salieron del GPS se guarda como "GPS" con la peor precisión de esos vértices. */
+function ubicacionDe(geo, gps) {
+  const [x, y] = centro(geo), g = aGeo(x, y), todosGps = gps.length === geo.length && gps.every(v => v != null);
+  return Object.assign(g, todosGps ? {ubicacion: 'GPS', prec: String(Math.max(...gps))} : {ubicacion: 'Plano'});
+}
+const textoUbic = m => m.lat == null ? 'Sin coordenadas' : `${(+m.lat).toFixed(6)}, ${(+m.lon).toFixed(6)} · ${m.ubic === 'GPS' ? 'GPS' + (m.prec != null ? ' ±' + m.prec + ' m' : '') : 'ubicada en el plano (±15 m)'}`;
 
-function formMarca(forma, geo) {
+function formMarca(forma, geo, ub) {
   const [cx, cy] = centro(geo), sector = sectorDePunto(cx, cy);
   modal('Nueva novedad en espacio común', `
     <p class="note">${M_FORMA[forma]} marcado en el plano${sector ? ' · Sector ' + esc(sector) : ''}.</p>
+    <p class="gpsinfo${ub.ubicacion === 'GPS' && +ub.prec > GPS_MAX ? ' lejos' : ''}">📍 ${esc(textoUbic({lat: ub.lat, lon: ub.lon, ubic: ub.ubicacion, prec: ub.prec}))}</p>
     <div class="grid2">
       <div class="f"><label for="mT">Tipo de novedad</label><select id="mT">${opts(M_TIPOS, M_TIPOS[0])}</select></div>
       <div class="f"><label for="mL">Lugar</label><select id="mL">${opts(M_LUGARES, forma === 'A' ? 'Plaza' : 'Calle')}</select></div>
@@ -739,7 +775,7 @@ function formMarca(forma, geo) {
   $('mRedib').onclick = () => entrarDibujo(forma);
   $('mOk').onclick = async () => {
     const d = Object.assign({forma: Object.keys(M_FORMA).find(k => M_FORMA[k] === M_FORMA[forma]) || forma, geo, sector, tipo: $('mT').value, lugar: $('mL').value,
-      descripcion: $('mD').value.trim(), estado: $('mE').value, revision: $('mR').value, obs: $('mO').value.trim()}, gpsDatos());
+      descripcion: $('mD').value.trim(), estado: $('mE').value, revision: $('mR').value, obs: $('mO').value.trim()}, ub);
     if (!d.descripcion) { toast('Describí la novedad.', true); return; }
     try {
       busy('Guardando…');
@@ -749,9 +785,9 @@ function formMarca(forma, geo) {
     } catch (e) { busy(''); error(e); }
   };
 }
-async function guardarRedibujo(n, forma, geo) {
+async function guardarRedibujo(n, forma, geo, ub) {
   const [cx, cy] = centro(geo);
-  try { busy('Guardando…'); await api('/marcas/' + encodeURIComponent(n), {method: 'PUT', json: {forma, geo, sector: sectorDePunto(cx, cy)}}); busy(''); toast(n + ': dibujo actualizado'); await cargar(); fichaMarca(n); }
+  try { busy('Guardando…'); await api('/marcas/' + encodeURIComponent(n), {method: 'PUT', json: Object.assign({forma, geo, sector: sectorDePunto(cx, cy)}, ub)}); busy(''); toast(n + ': dibujo actualizado'); await cargar(); fichaMarca(n); }
   catch (e) { busy(''); error(e); }
 }
 function fichaMarca(n, centrar_) {
@@ -770,12 +806,14 @@ function fichaMarca(n, centrar_) {
     <p class="ftxt">${esc(m.descripcion)}</p>
     <dl class="kv">
       <dt>Relevada</dt><dd>${fmt(m.fecha)} · ${quien(m.autor)}</dd>
+      <dt>Ubicación</dt><dd>${esc(textoUbic(m))}${m.lat != null ? ` · <a href="https://www.google.com/maps/search/?api=1&query=${+m.lat},${+m.lon}" target="_blank" rel="noopener">Abrir en el mapa</a>` : ''} · <button type="button" class="link" id="kVer">Ver en el plano</button></dd>
       <dt>${abierta_ ? 'Revisión' : 'Cierre'}</dt><dd>${fmt(abierta_ ? m.revision : m.cierre)}</dd>
       ${m.obs ? `<dt>Observación</dt><dd>${esc(m.obs)}</dd>` : ''}
     </dl>
     ${fotosDe(n)}
     <div class="list"><h3>Historial</h3><div class="timeline">${hs.map(x => `<div><span class="d">${fmt(x.fecha)} · ${quien(x.autor)}</span><br>${esc(x.cambio)}${x.nota ? ' — ' + esc(x.nota) : ''}</div>`).join('') || '<p class="empty">Sin movimientos.</p>'}</div></div>
   `, acciones);
+  $('kVer').onclick = () => { cerrarModal(); const [x, y] = centro(m.geo); seguir = false; marcarGps(); centrar(x, y, 400); };
   if ($('kEst')) $('kEst').onclick = () => formEstadoMarca(n);
   if ($('kEdit')) $('kEdit').onclick = () => editarMarca(n);
   if ($('kRedib')) $('kRedib').onclick = () => entrarDibujo(Object.keys(M_FORMA).find(k => M_FORMA[k] === m.forma), n);

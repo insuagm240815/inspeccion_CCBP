@@ -176,6 +176,8 @@ CREATE TABLE marca (
   fecha_cierre    DATE NULL,
   lat             DECIMAL(9,6) NULL,
   lon             DECIMAL(9,6) NULL,
+  precision_m     SMALLINT UNSIGNED NULL,                    -- ± metros del GPS (NULL = ubicada a mano en el plano)
+  ubicacion       ENUM('Plano','GPS') NOT NULL DEFAULT 'Plano',
   id_usuario      INT UNSIGNED NOT NULL,
   creado          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (nro_marca)  REFERENCES registro(nro_registro) ON DELETE CASCADE,

@@ -166,7 +166,7 @@ def api_estado(req: Request):
             "usuarios": filas(c, "SELECT id_usuario id, nombre FROM usuario"),
             "marcas": filas(c, """SELECT m.nro_marca n, m.fecha, m.tipo, m.descripcion, m.forma, m.geometria geo, m.lugar,
                                   s.nombre sector, m.estado, m.fecha_revision revision, m.fecha_cierre cierre, m.observacion obs,
-                                  m.id_usuario autor FROM marca m LEFT JOIN sector s ON s.id_sector = m.id_sector"""),
+                                  m.lat, m.lon, m.precision_m prec, m.ubicacion ubic, m.id_usuario autor FROM marca m LEFT JOIN sector s ON s.id_sector = m.id_sector"""),
             "grupos": filas(c, """SELECT a.nro_uf uf, GROUP_CONCAT(DISTINCT b.nro_uf) ufs FROM uf_pilar a
                                   JOIN uf_pilar b ON b.nro_pilar = a.nro_pilar GROUP BY a.nro_uf
                                   HAVING COUNT(DISTINCT b.nro_uf) > 1"""),
@@ -398,6 +398,19 @@ def _geo(d):
     return forma[0], json.dumps(pts)
 
 
+def _ubic(d):
+    """Coordenadas de la novedad (centro del dibujo) y cómo se ubicó: con el GPS del celular o a mano en el plano."""
+    lat, lon = _coord(d.get("lat"), -35.5, -33.5), _coord(d.get("lon"), -59.8, -57.8)
+    if lat is None or lon is None:
+        return None, None, None, "Plano"
+    gps = d.get("ubicacion") == "GPS"
+    try:
+        prec = min(max(int(float(d.get("prec"))), 0), 65000) if gps and d.get("prec") not in (None, "") else None
+    except (TypeError, ValueError):
+        prec = None
+    return lat, lon, prec, "GPS" if gps else "Plano"
+
+
 def _marca(c, n):
     m = fila(c, "SELECT * FROM marca WHERE nro_marca=%s FOR UPDATE", (n[:10],))
     if not m:
@@ -418,15 +431,15 @@ async def api_marca_alta(req: Request):
         lugar = d.get("lugar") if d.get("lugar") in M_LUGARES else "Otro"
         estado = d.get("estado") if d.get("estado") in M_ESTADOS else "Relevado"
         cerr, t = estado in M_CERRADOS, hoy()
-        lat, lon = _coord(d.get("lat"), -35.5, -33.5), _coord(d.get("lon"), -59.8, -57.8)
+        lat, lon, prec, ubic = _ubic(d)
         with conexion() as c:
             n = siguiente(c, "M")
             ejecutar(c, "INSERT INTO registro (nro_registro,tipo) VALUES (%s,'M')", (n,))
             ejecutar(c, """INSERT INTO marca (nro_marca,fecha,tipo,descripcion,forma,geometria,lugar,id_sector,estado,fecha_revision,
-                           observacion,fecha_cierre,lat,lon,id_usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                           observacion,fecha_cierre,lat,lon,precision_m,ubicacion,id_usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                      (n, t, tipo, desc, forma, geo, lugar, SECTORES.get(d.get("sector")), estado,
                       None if cerr else _fecha(d.get("revision"), "fecha de revisión", True), _texto(d.get("obs")),
-                      t if cerr else None, lat if lon is not None else None, lon if lat is not None else None, u["id_usuario"]))
+                      t if cerr else None, lat, lon, prec, ubic, u["id_usuario"]))
             _hist(c, n, None, f"Alta en {lugar.lower()} ({forma.lower()}). Estado: {estado}", "", u["id_usuario"])
             _insertar_fotos(c, fotos.get("marca", []), n, None, t, "Antes", u["id_usuario"], escritos)
         return {"ok": True, "n": n}
@@ -454,7 +467,9 @@ async def api_marca_modif(n: str, req: Request):
                 sets.append("lugar=%s"); args.append(d["lugar"]); cambios.append("lugar: " + d["lugar"])
             if d.get("geo") is not None:
                 forma, geo = _geo(d)
-                sets += ["forma=%s", "geometria=%s", "id_sector=%s"]; args += [forma, geo, SECTORES.get(d.get("sector"), m["id_sector"])]
+                lat, lon, prec, ubic = _ubic(d)
+                sets += ["forma=%s", "geometria=%s", "id_sector=%s", "lat=%s", "lon=%s", "precision_m=%s", "ubicacion=%s"]
+                args += [forma, geo, SECTORES.get(d.get("sector"), m["id_sector"]), lat, lon, prec, ubic]
                 cambios.append("dibujo")
             if sets:
                 ejecutar(c, f"UPDATE marca SET {', '.join(sets)} WHERE nro_marca=%s", args + [m["nro_marca"]])
