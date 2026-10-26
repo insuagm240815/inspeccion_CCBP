@@ -164,10 +164,15 @@ def api_estado(req: Request):
                                     (SELECT COUNT(*) FROM hallazgo h WHERE h.codigo = c.codigo) usos
                                     FROM catalogo_falta c JOIN rubro r ON r.id_rubro = c.id_rubro"""),
             "usuarios": filas(c, "SELECT id_usuario id, nombre FROM usuario"),
+            "marcas": filas(c, """SELECT m.nro_marca n, m.fecha, m.tipo, m.descripcion, m.forma, m.geometria geo, m.lugar,
+                                  s.nombre sector, m.estado, m.fecha_revision revision, m.fecha_cierre cierre, m.observacion obs,
+                                  m.id_usuario autor FROM marca m LEFT JOIN sector s ON s.id_sector = m.id_sector"""),
             "grupos": filas(c, """SELECT a.nro_uf uf, GROUP_CONCAT(DISTINCT b.nro_uf) ufs FROM uf_pilar a
                                   JOIN uf_pilar b ON b.nro_pilar = a.nro_pilar GROUP BY a.nro_uf
                                   HAVING COUNT(DISTINCT b.nro_uf) > 1"""),
         }
+    for m in out["marcas"]:
+        m["geo"] = json.loads(m["geo"]) if isinstance(m["geo"], str) else m["geo"]
     return out
 
 
@@ -362,6 +367,152 @@ async def api_borrar(n: str, req: Request):
                      (h["nro_hallazgo"], h["nro_uf"], f"{h['codigo']} {cat['falta'] if cat else ''}"[:300], h["estado"],
                       h["fecha"], h["observacion"], motivo, len(fs), u["id_usuario"]))
             ejecutar(c, "DELETE FROM registro WHERE nro_registro=%s", (h["nro_hallazgo"],))   # cascada: falta, historial, fotos
+        for f in fs:
+            F.a_papelera(f["archivo"])
+        return {"ok": True}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+# ───────── Novedades en espacios comunes (marcas en el plano) ─────────
+M_ESTADOS = ['Relevado', 'Informado a mantenimiento', 'En reparación', 'Reparado', 'No corresponde']
+M_CERRADOS = ['Reparado', 'No corresponde']
+M_GESTION = ['Informado a mantenimiento', 'En reparación']          # lo que puede marcar el usuario de consulta
+M_LUGARES = ['Calle', 'Peatonal', 'Plaza', 'Espacio verde', 'Club / deportes', 'Perímetro', 'Otro']
+M_FORMAS = {'P': ('Punto', 1, 1), 'L': ('Línea', 2, 400), 'A': ('Área', 3, 400)}
+SECTORES = {'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5, 'Golf': 6}
+
+
+def _geo(d):
+    forma = M_FORMAS.get(d.get("forma"))
+    if not forma:
+        raise HTTPException(400, "Forma no válida.")
+    try:
+        pts = [[round(float(x), 1), round(float(y), 1)] for x, y in (d.get("geo") or [])]
+    except (TypeError, ValueError):
+        raise HTTPException(400, "El dibujo no es válido.")
+    if not (forma[1] <= len(pts) <= forma[2]) or any(not (-500 <= x <= 4500 and -500 <= y <= 4000) for x, y in pts):
+        raise HTTPException(400, f"Un/a {forma[0].lower()} necesita al menos {forma[1]} punto(s) dentro del plano.")
+    return forma[0], json.dumps(pts)
+
+
+def _marca(c, n):
+    m = fila(c, "SELECT * FROM marca WHERE nro_marca=%s FOR UPDATE", (n[:10],))
+    if not m:
+        raise HTTPException(404, f"No encontré la novedad {n}.")
+    return m
+
+
+@app.post("/api/marcas")
+async def api_marca_alta(req: Request):
+    u = await run_in_threadpool(exigir, req, "inspector", True)
+    d, fotos = await _form(req)
+
+    def tx(escritos):
+        forma, geo = _geo(d)
+        tipo, desc = _texto(d.get("tipo"), 60), _texto(d.get("descripcion"), 500)
+        if not tipo or not desc:
+            raise HTTPException(400, "Elegí el tipo de novedad y describila.")
+        lugar = d.get("lugar") if d.get("lugar") in M_LUGARES else "Otro"
+        estado = d.get("estado") if d.get("estado") in M_ESTADOS else "Relevado"
+        cerr, t = estado in M_CERRADOS, hoy()
+        lat, lon = _coord(d.get("lat"), -35.5, -33.5), _coord(d.get("lon"), -59.8, -57.8)
+        with conexion() as c:
+            n = siguiente(c, "M")
+            ejecutar(c, "INSERT INTO registro (nro_registro,tipo) VALUES (%s,'M')", (n,))
+            ejecutar(c, """INSERT INTO marca (nro_marca,fecha,tipo,descripcion,forma,geometria,lugar,id_sector,estado,fecha_revision,
+                           observacion,fecha_cierre,lat,lon,id_usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     (n, t, tipo, desc, forma, geo, lugar, SECTORES.get(d.get("sector")), estado,
+                      None if cerr else _fecha(d.get("revision"), "fecha de revisión", True), _texto(d.get("obs")),
+                      t if cerr else None, lat if lon is not None else None, lon if lat is not None else None, u["id_usuario"]))
+            _hist(c, n, None, f"Alta en {lugar.lower()} ({forma.lower()}). Estado: {estado}", "", u["id_usuario"])
+            _insertar_fotos(c, fotos.get("marca", []), n, None, t, "Antes", u["id_usuario"], escritos)
+        return {"ok": True, "n": n}
+
+    r = await run_in_threadpool(_con_fotos, tx)
+    cambio()
+    return r
+
+
+@app.put("/api/marcas/{n}")
+async def api_marca_modif(n: str, req: Request):
+    u = await run_in_threadpool(exigir, req, "inspector", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            m = _marca(c, n)
+            cambios, sets, args = [], [], []
+            for campo, largo, etiqueta in (("tipo", 60, "tipo"), ("descripcion", 500, "descripción"), ("observacion", 2000, "observación")):
+                if d.get(campo) is not None and _texto(d[campo], largo) != (m[campo] or ""):
+                    if campo != "observacion" and not _texto(d[campo], largo):
+                        raise HTTPException(400, f"El campo {etiqueta} no puede quedar vacío.")
+                    sets.append(f"{campo}=%s"); args.append(_texto(d[campo], largo)); cambios.append(etiqueta)
+            if d.get("lugar") in M_LUGARES and d["lugar"] != m["lugar"]:
+                sets.append("lugar=%s"); args.append(d["lugar"]); cambios.append("lugar: " + d["lugar"])
+            if d.get("geo") is not None:
+                forma, geo = _geo(d)
+                sets += ["forma=%s", "geometria=%s", "id_sector=%s"]; args += [forma, geo, SECTORES.get(d.get("sector"), m["id_sector"])]
+                cambios.append("dibujo")
+            if sets:
+                ejecutar(c, f"UPDATE marca SET {', '.join(sets)} WHERE nro_marca=%s", args + [m["nro_marca"]])
+                _hist(c, m["nro_marca"], None, "Editada: " + ", ".join(cambios), d.get("nota"), u["id_usuario"])
+        return {"ok": True}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+@app.post("/api/marcas/{n}/estado")
+async def api_marca_estado(n: str, req: Request):
+    u = await run_in_threadpool(exigir, req, "consulta", True)
+    gestion = u["rol"] == "consulta"
+    d, fotos = await _form(req)
+
+    def tx(escritos):
+        estado = d.get("estado")
+        if estado not in M_ESTADOS:
+            raise HTTPException(400, "Estado no válido.")
+        if gestion and (estado not in M_GESTION or fotos):
+            raise HTTPException(403, "Tu usuario solo puede marcar la novedad como informada a mantenimiento o en reparación.")
+        t = hoy()
+        with conexion() as c:
+            m = _marca(c, n)
+            if gestion and m["estado"] in M_CERRADOS:
+                raise HTTPException(403, "La novedad está cerrada; solo un inspector puede reabrirla.")
+            cerr = estado in M_CERRADOS
+            rev = None if cerr else (_fecha(d.get("revision"), "fecha de revisión", True) or m["fecha_revision"])
+            ejecutar(c, "UPDATE marca SET estado=%s, fecha_cierre=%s, fecha_revision=%s WHERE nro_marca=%s",
+                     (estado, t if cerr else None, rev, m["nro_marca"]))
+            _hist(c, m["nro_marca"], None, f"{m['estado']} → {estado}", d.get("nota"), u["id_usuario"])
+            _insertar_fotos(c, fotos.get("estado", []), m["nro_marca"], None, t, "Después" if cerr else "Seguimiento", u["id_usuario"], escritos)
+        return {"ok": True}
+
+    r = await run_in_threadpool(_con_fotos, tx)
+    cambio()
+    return r
+
+
+@app.post("/api/marcas/{n}/borrar")
+async def api_marca_borrar(n: str, req: Request):
+    u = await run_in_threadpool(exigir, req, "supervisor", True)
+    d = await req.json()
+    motivo = _texto(d.get("motivo"))
+    if len(motivo) < 5:
+        raise HTTPException(400, "Escribí el motivo del borrado.")
+
+    def tx():
+        with conexion() as c:
+            m = _marca(c, n)
+            fs = filas(c, "SELECT archivo FROM foto WHERE nro_registro=%s", (m["nro_marca"],))
+            ejecutar(c, """INSERT INTO registro_borrado (nro_registro,nro_uf,descripcion,estado,fecha,observacion,motivo,fotos_eliminadas,id_usuario)
+                           VALUES (%s,NULL,%s,%s,%s,%s,%s,%s,%s)""",
+                     (m["nro_marca"], f"{m['lugar']} · {m['tipo']} · {m['descripcion']}"[:300], m["estado"], m["fecha"], m["observacion"],
+                      motivo, len(fs), u["id_usuario"]))
+            ejecutar(c, "DELETE FROM registro WHERE nro_registro=%s", (m["nro_marca"],))
         for f in fs:
             F.a_papelera(f["archivo"])
         return {"ok": True}

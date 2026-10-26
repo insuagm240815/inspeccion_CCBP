@@ -42,6 +42,19 @@
     <div class="mapwrap">
       <svg id="map" viewBox="80 0 3860 3330" preserveAspectRatio="xMidYMid meet" aria-label="Plano de lotes del country"></svg>
       <div class="banner" id="banner" hidden></div>
+      <div class="dibujo" id="dibujo" hidden>
+        <div class="row">
+          <b>Novedad en espacio común</b>
+          <span class="seg"><button type="button" data-forma="P">Punto</button><button type="button" data-forma="L">Línea</button><button type="button" data-forma="A">Área</button></span>
+        </div>
+        <p id="dibTxt" class="note"></p>
+        <div class="row">
+          <button type="button" id="dibGps" hidden>📍 Mi ubicación</button>
+          <button type="button" id="dibUndo">Deshacer</button>
+          <button type="button" id="dibX">Cancelar</button>
+          <button type="button" class="pri" id="dibOk">Listo</button>
+        </div>
+      </div>
       <div class="tip" id="tip" role="tooltip" hidden></div>
       <div class="legend" aria-label="Referencias">
         <span><i style="background:var(--st-venc)"></i>Revisión vencida</span>
@@ -49,8 +62,10 @@
         <span><i style="background:var(--st-abierta)"></i>Falta abierta</span>
         <span><i style="background:var(--st-cerrada)"></i>Faltas cerradas</span>
         <span><i style="background:var(--st-visit)"></i>Visitada sin faltas</span>
+        <span><i class="lg-mk"></i>Novedad en espacio común</span>
       </div>
       <div class="mapctl">
+        <button type="button" id="bLapiz" aria-label="Marcar novedad en espacio común" title="Novedad en espacio común (calles, plazas…)" hidden>✎</button>
         <button type="button" id="bGps" aria-label="Mostrar mi ubicación" title="Mi ubicación">◎</button>
         <button type="button" id="zIn" aria-label="Acercar">+</button>
         <button type="button" id="zOut" aria-label="Alejar">−</button>

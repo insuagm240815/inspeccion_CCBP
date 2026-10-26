@@ -18,7 +18,7 @@ const CONTACTOS = ['Hablé con el residente','No había nadie','No había nadie,
 const NIVEL = {consulta: 0, inspector: 1, supervisor: 2, admin: 3};
 
 /* ───────── estado ───────── */
-const S = {visitas: {}, hallazgos: {}, hist: [], fotos: [], cat: {}, usuarios: {}};
+const S = {visitas: {}, hallazgos: {}, hist: [], fotos: [], cat: {}, usuarios: {}, marcas: {}};
 let YO = null, SEL = -1, FSEC = '', FVIS = '';
 const ufLot = {};
 LOTS.forEach((l, i) => l.n.forEach(u => { ufLot[u] = i; }));
@@ -60,7 +60,7 @@ function modal(titulo, cuerpo, pie) {
   iniciarFotos(m);
   return m;
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('modal').hidden) cerrarModal(); });
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('modal').hidden) cerrarModal(); else if (DIB) salirDibujo(); });
 const quien = id => `<span class="who">${esc((S.usuarios[id] || {}).nombre || '—')}</span>`;
 const fotoURL = n => '/api/fotos/' + encodeURIComponent(n);
 const ocultarRota = img => { img.addEventListener('error', () => { img.style.visibility = 'hidden'; }); };
@@ -96,7 +96,7 @@ PLAZAS.forEach(d => el('path', {d, class: 'plaza'}, gBg));
 el('path', {d: BG.club, class: 'club'}, gBg);
 el('path', {d: BG.water, class: 'water'}, gBg);
 SECT_LABELS.forEach(([t, x, y]) => { el('text', {x, y: y + 50, class: 'sec-label', 'text-anchor': 'middle'}, gBg).textContent = t; });
-const gLots = el('g', {}), gNum = el('g', {}), gGps = el('g', {});
+const gLots = el('g', {}), gNum = el('g', {}), gMarcas = el('g', {}), gDib = el('g', {}), gGps = el('g', {});
 const paths = LOTS.map((l, i) => el('path', {d: l.d, class: 'lot', 'data-i': i}, gLots));
 LOTS.forEach(l => { el('text', {x: l.c[0], y: l.c[1], class: 'num'}, gNum).textContent = l.n.join('/'); });
 
@@ -154,6 +154,9 @@ function ocultarTip() { tip.hidden = true; tipI = -1; }
 svg.addEventListener('pointerleave', ocultarTip);
 svg.addEventListener('pointermove', e => {
   if (e.pointerType !== 'mouse' || ptrs.size) { if (!tip.hidden) ocultarTip(); return; }
+  if (DIB) { if (!tip.hidden) ocultarTip(); return; }
+  const mk = e.target.dataset && e.target.dataset.m;
+  if (mk) { if (tipI !== 'm' + mk) { tipI = 'm' + mk; tip.innerHTML = textoTipMarca(mk); tip.hidden = false; } moverTip(e); return; }
   const i = e.target.dataset && e.target.dataset.i != null ? +e.target.dataset.i : -1;
   if (i < 0) { if (!tip.hidden) ocultarTip(); return; }
   if (i !== tipI) { tipI = i; tip.innerHTML = textoTip(i); tip.hidden = false; }
@@ -177,7 +180,11 @@ svg.addEventListener('pointermove', e => {
 function finPtr(e) {
   if (!ptrs.has(e.pointerId)) return;
   ptrs.delete(e.pointerId);
-  if (ptrs.size === 0 && moved < 8 && downT && downT.dataset && downT.dataset.i != null) seleccionar(+downT.dataset.i);
+  if (ptrs.size === 0 && moved < 8) {
+    if (DIB) agregarPunto(e);
+    else if (downT && downT.dataset && downT.dataset.m) fichaMarca(downT.dataset.m);
+    else if (downT && downT.dataset && downT.dataset.i != null) seleccionar(+downT.dataset.i);
+  }
   if (ptrs.size < 2) pinch0 = 0;
 }
 svg.addEventListener('pointerup', finPtr);
@@ -273,7 +280,9 @@ function render() {
     const n = Object.values(S.hallazgos).filter(h => abierta(h) && h.revision && h.revision <= hoy()).length;
     $('nAgenda').hidden = !n; $('nAgenda').textContent = n;
     if (SEL >= 0) pintarPanel();
-    if (tipI >= 0) tip.innerHTML = textoTip(tipI);   // datos nuevos mientras el mouse está encima
+    if (typeof tipI === 'number' && tipI >= 0) tip.innerHTML = textoTip(tipI);
+    else if (typeof tipI === 'string' && S.marcas[tipI.slice(1)]) tip.innerHTML = textoTipMarca(tipI.slice(1));
+    pintarMarcas();   // datos nuevos mientras el mouse está encima
   });
 }
 
@@ -504,12 +513,14 @@ let tabAg = 'venc';
 function agenda() {
   const t = hoy(), todas = Object.values(S.hallazgos).filter(abierta);
   const grupos = {venc: todas.filter(h => h.revision && h.revision < t), hoy: todas.filter(h => h.revision === t), prox: todas.filter(h => !h.revision || h.revision > t)};
-  const lista = grupos[tabAg].sort((a, b) => (a.revision || '9').localeCompare(b.revision || '9') || a.uf - b.uf);
+  const marcasAb = Object.values(S.marcas).filter(m => M_CERR.indexOf(m.estado) < 0).sort((a, b) => (a.revision || '9').localeCompare(b.revision || '9'));
+  const lista = tabAg === 'esp' ? [] : grupos[tabAg].sort((a, b) => (a.revision || '9').localeCompare(b.revision || '9') || a.uf - b.uf);
   const m = modal('Agenda de revisiones', `
-    <div class="tabs">${[['venc', 'Vencidas'], ['hoy', 'Hoy'], ['prox', 'Próximas']].map(([k, l]) => `<button type="button" class="chip" data-tab="${k}" aria-pressed="${k === tabAg}">${l} (${grupos[k].length})</button>`).join('')}</div>
-    <div class="list">${lista.length ? lista.map(h => `<button type="button" class="item" data-ag="${esc(h.n)}"><span class="top"><span class="cod">U.F. ${h.uf} · ${esc(h.n)}</span>${pillEstado(h)}</span><span class="t">${esc(catTxt(h.codigo))}</span><span class="meta">Revisión ${fmt(h.revision)} · Sector ${esc(sectorDe(h.uf))}${posVigente() && ufLot[h.uf] != null ? ' · a ' + metrosA(ufLot[h.uf], POS) + ' m' : ''}</span></button>`).join('') : '<p class="empty">Nada en esta lista.</p>'}</div>
+    <div class="tabs">${[['venc', 'Vencidas'], ['hoy', 'Hoy'], ['prox', 'Próximas'], ['esp', 'Espacios comunes']].map(([k, l]) => `<button type="button" class="chip" data-tab="${k}" aria-pressed="${k === tabAg}">${l} (${k === 'esp' ? marcasAb.length : grupos[k].length})</button>`).join('')}</div>
+    <div class="list">${tabAg === 'esp' ? (marcasAb.length ? marcasAb.map(m => itemMarca(m)).join('') : '<p class="empty">No hay novedades abiertas en espacios comunes.</p>') : lista.length ? lista.map(h => `<button type="button" class="item" data-ag="${esc(h.n)}"><span class="top"><span class="cod">U.F. ${h.uf} · ${esc(h.n)}</span>${pillEstado(h)}</span><span class="t">${esc(catTxt(h.codigo))}</span><span class="meta">Revisión ${fmt(h.revision)} · Sector ${esc(sectorDe(h.uf))}${posVigente() && ufLot[h.uf] != null ? ' · a ' + metrosA(ufLot[h.uf], POS) + ' m' : ''}</span></button>`).join('') : '<p class="empty">Nada en esta lista.</p>'}</div>
   `);
   m.querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => { tabAg = b.dataset.tab; agenda(); }; });
+  m.querySelectorAll('[data-mk]').forEach(b => { b.onclick = () => { cerrarModal(); fichaMarca(b.dataset.mk, true); }; });
   m.querySelectorAll('[data-ag]').forEach(b => { b.onclick = () => { const h = S.hallazgos[b.dataset.ag], i = ufLot[h.uf]; cerrarModal(); if (i != null) { seguir = false; marcarGps(); seleccionar(i); irA(i); } fichaFalta(h.n); }; });
 }
 $('bAgenda').onclick = agenda;
@@ -633,6 +644,194 @@ function confirmarBaja(c) {
   };
 }
 $('bCat').onclick = catalogo;
+
+/* ───────── novedades en espacios comunes (lápiz) ───────── */
+const M_ESTADOS = ['Relevado', 'Informado a mantenimiento', 'En reparación', 'Reparado', 'No corresponde'];
+const M_CERR = ['Reparado', 'No corresponde'], M_GESTION = ['Informado a mantenimiento', 'En reparación'];
+const M_TIPOS = ['Bache / calzada dañada', 'Cordón o vereda rota', 'Luminaria apagada o dañada', 'Arbolado / ramas / poda', 'Pasto alto / falta de limpieza',
+  'Residuos o escombros', 'Pérdida de agua / desagüe', 'Señalización / cartelería', 'Mobiliario, juegos o bancos', 'Cableado bajo o caído', 'Cerco perimetral', 'Otro'];
+const M_LUGARES = ['Calle', 'Peatonal', 'Plaza', 'Espacio verde', 'Club / deportes', 'Perímetro', 'Otro'];
+const M_FORMA = {P: 'Punto', L: 'Línea', A: 'Área'};
+const mkClase = e => ({'Relevado': 'rel', 'Informado a mantenimiento': 'inf', 'En reparación': 'rep'}[e] || 'ok');
+const pillMarca = m => `<span class="pill mk-${mkClase(m.estado)}">${esc(m.estado)}</span>`;
+const centro = g => [g.reduce((s, p) => s + p[0], 0) / g.length, g.reduce((s, p) => s + p[1], 0) / g.length];
+function sectorDePunto(x, y) {
+  let best = -1, bd = Infinity;
+  LOTS.forEach((l, i) => { const d = Math.hypot(l.c[0] - x, l.c[1] - y); if (d < bd) { bd = d; best = i; } });
+  return best >= 0 ? sectorDe(LOTS[best].n[0]) : '';
+}
+function textoTipMarca(n) {
+  const m = S.marcas[n]; if (!m) return '';
+  return `<b>${esc(m.n)} · ${esc(m.lugar)}</b><span class="tip-s">${esc(m.tipo)}</span><span class="tip-n">${esc(m.estado)}</span>${m.revision && M_CERR.indexOf(m.estado) < 0 ? `<span class="tip-s">Revisión ${fmt(m.revision)}</span>` : ''}`;
+}
+function pintarMarcas() {
+  gMarcas.innerHTML = '';
+  Object.values(S.marcas).forEach(m => {
+    const c = 'mk mk-' + mkClase(m.estado) + (FSEC && m.sector && m.sector !== 'Sector ' + FSEC ? ' dim' : '');
+    const pts = m.geo.map(p => p.join(',')).join(' ');
+    if (m.forma === 'Área') el('polygon', {points: pts, class: c + ' mk-a', 'data-m': m.n}, gMarcas);
+    else if (m.forma === 'Línea') { el('polyline', {points: pts, class: c + ' mk-l-halo', 'data-m': m.n}, gMarcas); el('polyline', {points: pts, class: c + ' mk-l', 'data-m': m.n}, gMarcas); }
+    else { const [x, y] = m.geo[0]; el('circle', {cx: x, cy: y, r: 20, class: c + ' mk-p', 'data-m': m.n}, gMarcas); }
+  });
+}
+const itemMarca = m => `<button type="button" class="item" data-mk="${esc(m.n)}"><span class="top"><span class="cod">${esc(m.n)} · ${esc(m.lugar)}${m.sector ? ' · ' + esc(m.sector) : ''}</span>${pillMarca(m)}</span><span class="t">${esc(m.tipo)}</span><span class="meta">${esc(m.descripcion)}${m.revision && M_CERR.indexOf(m.estado) < 0 ? ' · revisión ' + fmt(m.revision) : ''}</span></button>`;
+
+/* modo dibujo */
+let DIB = null;   // {forma, pts:[[x,y]], editar: n | null}
+function entrarDibujo(forma, editar) {
+  if (!puede('inspector')) return;
+  cerrarModal(); ocultarTip();
+  DIB = {forma: forma || 'P', pts: [], editar: editar || null};
+  $('dibujo').hidden = false; $('bLapiz').classList.add('on'); svg.classList.add('dibujando');
+  pintarDibujo();
+}
+function salirDibujo() { DIB = null; gDib.innerHTML = ''; $('dibujo').hidden = true; $('bLapiz').classList.remove('on'); svg.classList.remove('dibujando'); }
+function agregarPunto(e) {
+  const p = aSvg(e.clientX, e.clientY), q = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+  if (DIB.forma === 'P') DIB.pts = [q]; else DIB.pts.push(q);
+  pintarDibujo();
+  if (DIB.forma === 'P') terminarDibujo();
+}
+function pintarDibujo() {
+  gDib.innerHTML = '';
+  const d = DIB; if (!d) return;
+  document.querySelectorAll('[data-forma]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.forma === d.forma)));
+  const min = d.forma === 'A' ? 3 : d.forma === 'L' ? 2 : 1;
+  $('dibTxt').textContent = d.forma === 'P' ? 'Tocá el plano donde está la novedad.'
+    : `Tocá el plano para marcar ${d.forma === 'L' ? 'el recorrido' : 'el contorno'} (${d.pts.length} ${d.pts.length === 1 ? 'punto' : 'puntos'}${d.pts.length < min ? `, mínimo ${min}` : ''}).`;
+  $('dibOk').hidden = d.forma === 'P'; $('dibOk').disabled = d.pts.length < min;
+  $('dibUndo').hidden = d.forma === 'P'; $('dibUndo').disabled = !d.pts.length;
+  $('dibGps').hidden = !posVigente();
+  if (d.pts.length > 1) el(d.forma === 'A' ? 'polygon' : 'polyline', {points: d.pts.map(p => p.join(',')).join(' '), class: 'dib-' + d.forma}, gDib);
+  d.pts.forEach(([x, y]) => el('circle', {cx: x, cy: y, r: 7, class: 'dib-v'}, gDib));
+}
+function terminarDibujo() {
+  const d = DIB; if (!d) return;
+  const forma = d.forma, geo = d.pts.slice(), editar = d.editar;
+  salirDibujo();
+  if (editar) guardarRedibujo(editar, forma, geo); else formMarca(forma, geo);
+}
+document.querySelectorAll('[data-forma]').forEach(b => { b.onclick = () => { if (DIB) { DIB.forma = b.dataset.forma; DIB.pts = []; pintarDibujo(); } }; });
+$('bLapiz').onclick = () => DIB ? salirDibujo() : entrarDibujo('P');
+$('dibX').onclick = salirDibujo;
+$('dibUndo').onclick = () => { if (DIB) { DIB.pts.pop(); pintarDibujo(); } };
+$('dibOk').onclick = terminarDibujo;
+$('dibGps').onclick = () => { const p = posVigente(); if (!DIB || !p) return; const q = [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+  if (DIB.forma === 'P') { DIB.pts = [q]; terminarDibujo(); } else { DIB.pts.push(q); pintarDibujo(); } };
+
+function formMarca(forma, geo) {
+  const [cx, cy] = centro(geo), sector = sectorDePunto(cx, cy);
+  modal('Nueva novedad en espacio común', `
+    <p class="note">${M_FORMA[forma]} marcado en el plano${sector ? ' · Sector ' + esc(sector) : ''}.</p>
+    <div class="grid2">
+      <div class="f"><label for="mT">Tipo de novedad</label><select id="mT">${opts(M_TIPOS, M_TIPOS[0])}</select></div>
+      <div class="f"><label for="mL">Lugar</label><select id="mL">${opts(M_LUGARES, forma === 'A' ? 'Plaza' : 'Calle')}</select></div>
+    </div>
+    <div class="f"><label for="mD">Descripción</label><textarea id="mD" rows="2" maxlength="500" placeholder="Qué se ve y dónde (ej.: bache de 1 m frente a la U.F. 1203)"></textarea></div>
+    <div class="grid2">
+      <div class="f"><label for="mE">Estado</label><select id="mE">${opts(M_ESTADOS.slice(0, 3), 'Relevado')}</select></div>
+      <div class="f"><label for="mR">Volver a revisar</label><input id="mR" type="date" value="${masDias(7)}" min="${hoy()}"></div>
+    </div>
+    <div class="f"><label for="mO">Observación</label><textarea id="mO" rows="2" placeholder="Opcional"></textarea></div>
+    ${campoFotos('mF')}
+  `, '<button type="button" id="mX">Cancelar</button><button type="button" id="mRedib">Volver a dibujar</button><button type="button" class="pri" id="mOk">Guardar</button>');
+  $('mX').onclick = cerrarModal;
+  $('mRedib').onclick = () => entrarDibujo(forma);
+  $('mOk').onclick = async () => {
+    const d = Object.assign({forma: Object.keys(M_FORMA).find(k => M_FORMA[k] === M_FORMA[forma]) || forma, geo, sector, tipo: $('mT').value, lugar: $('mL').value,
+      descripcion: $('mD').value.trim(), estado: $('mE').value, revision: $('mR').value, obs: $('mO').value.trim()}, gpsDatos());
+    if (!d.descripcion) { toast('Describí la novedad.', true); return; }
+    try {
+      busy('Guardando…');
+      const fd = new FormData(); fd.append('datos', JSON.stringify(d)); await agregarFotos(fd, 'marca', archivos('mF'));
+      const r = await api('/marcas', {method: 'POST', form: fd});
+      busy(''); cerrarModal(); toast(r.n + ' guardada'); await cargar();
+    } catch (e) { busy(''); error(e); }
+  };
+}
+async function guardarRedibujo(n, forma, geo) {
+  const [cx, cy] = centro(geo);
+  try { busy('Guardando…'); await api('/marcas/' + encodeURIComponent(n), {method: 'PUT', json: {forma, geo, sector: sectorDePunto(cx, cy)}}); busy(''); toast(n + ': dibujo actualizado'); await cargar(); fichaMarca(n); }
+  catch (e) { busy(''); error(e); }
+}
+function fichaMarca(n, centrar_) {
+  const m = S.marcas[n]; if (!m) return;
+  if (centrar_) { const [x, y] = centro(m.geo); seguir = false; marcarGps(); centrar(x, y, 500); }
+  const abierta_ = M_CERR.indexOf(m.estado) < 0, hs = S.hist.filter(x => x.reg === n);
+  const acciones = [
+    puede('supervisor') ? '<button type="button" class="danger" id="kBorrar">Borrar</button>' : '',
+    puede('inspector') ? '<button type="button" id="kEdit">Editar</button>' : '',
+    puede('inspector') ? '<button type="button" id="kRedib">Redibujar</button>' : '',
+    puede('inspector') ? '<button type="button" class="pri" id="kEst">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta_ ? '<button type="button" class="pri" id="kEst">Gestionar</button>' : ''),
+  ].join('');
+  modal(n + ' · ' + m.lugar, `
+    <div class="row">${pillMarca(m)}<span class="cod">${esc(m.forma)}${m.sector ? ' · ' + esc(m.sector) : ''}</span></div>
+    <p class="ftit">${esc(m.tipo)}</p>
+    <p class="ftxt">${esc(m.descripcion)}</p>
+    <dl class="kv">
+      <dt>Relevada</dt><dd>${fmt(m.fecha)} · ${quien(m.autor)}</dd>
+      <dt>${abierta_ ? 'Revisión' : 'Cierre'}</dt><dd>${fmt(abierta_ ? m.revision : m.cierre)}</dd>
+      ${m.obs ? `<dt>Observación</dt><dd>${esc(m.obs)}</dd>` : ''}
+    </dl>
+    ${fotosDe(n)}
+    <div class="list"><h3>Historial</h3><div class="timeline">${hs.map(x => `<div><span class="d">${fmt(x.fecha)} · ${quien(x.autor)}</span><br>${esc(x.cambio)}${x.nota ? ' — ' + esc(x.nota) : ''}</div>`).join('') || '<p class="empty">Sin movimientos.</p>'}</div></div>
+  `, acciones);
+  if ($('kEst')) $('kEst').onclick = () => formEstadoMarca(n);
+  if ($('kEdit')) $('kEdit').onclick = () => editarMarca(n);
+  if ($('kRedib')) $('kRedib').onclick = () => entrarDibujo(Object.keys(M_FORMA).find(k => M_FORMA[k] === m.forma), n);
+  if ($('kBorrar')) $('kBorrar').onclick = () => borrarMarca(n);
+}
+function formEstadoMarca(n) {
+  const m = S.marcas[n], gestion = !puede('inspector'), lista = gestion ? M_GESTION : M_ESTADOS;
+  modal((gestion ? 'Gestionar · ' : 'Cambiar estado · ') + n, `
+    <div class="f"><label for="qE">Nuevo estado</label><select id="qE">${opts(lista, lista.indexOf(m.estado) >= 0 ? m.estado : lista[0])}</select></div>
+    <div class="f" id="qRw"><label for="qR">Volver a revisar</label><input id="qR" type="date" value="${masDias(7)}" min="${hoy()}"></div>
+    <div class="f"><label for="qN">Nota</label><textarea id="qN" rows="2" placeholder="${gestion ? 'A quién se informó, Nº de pedido, plazo' : 'Qué se vio o se hizo'}"></textarea></div>
+    ${gestion ? '' : campoFotos('qF')}
+  `, '<button type="button" id="qX">Cancelar</button><button type="button" class="pri" id="qOk">Guardar</button>');
+  const sync = () => { $('qRw').hidden = M_CERR.indexOf($('qE').value) >= 0; }; $('qE').onchange = sync; sync();
+  $('qX').onclick = () => fichaMarca(n);
+  $('qOk').onclick = async () => {
+    const estado = $('qE').value;
+    try {
+      busy('Guardando…');
+      const fd = new FormData(); fd.append('datos', JSON.stringify({estado, nota: $('qN').value.trim(), revision: $('qR').value}));
+      if (!gestion) await agregarFotos(fd, 'estado', archivos('qF'));
+      await api('/marcas/' + encodeURIComponent(n) + '/estado', {method: 'POST', form: fd});
+      busy(''); cerrarModal(); toast(n + ': ' + estado); await cargar();
+    } catch (e) { busy(''); error(e); }
+  };
+}
+function editarMarca(n) {
+  const m = S.marcas[n];
+  modal('Editar ' + n, `
+    <div class="grid2">
+      <div class="f"><label for="eT">Tipo de novedad</label><select id="eT">${opts(M_TIPOS.indexOf(m.tipo) >= 0 ? M_TIPOS : [m.tipo].concat(M_TIPOS), m.tipo)}</select></div>
+      <div class="f"><label for="eL">Lugar</label><select id="eL">${opts(M_LUGARES, m.lugar)}</select></div>
+    </div>
+    <div class="f"><label for="eD">Descripción</label><textarea id="eD" rows="2" maxlength="500">${esc(m.descripcion)}</textarea></div>
+    <div class="f"><label for="eO">Observación</label><textarea id="eO" rows="2">${esc(m.obs || '')}</textarea></div>
+  `, '<button type="button" id="eX">Cancelar</button><button type="button" class="pri" id="eOk">Guardar</button>');
+  $('eX').onclick = () => fichaMarca(n);
+  $('eOk').onclick = async () => {
+    const d = {tipo: $('eT').value, lugar: $('eL').value, descripcion: $('eD').value.trim(), observacion: $('eO').value.trim()};
+    if (!d.descripcion) { toast('La descripción no puede quedar vacía.', true); return; }
+    try { busy('Guardando…'); await api('/marcas/' + encodeURIComponent(n), {method: 'PUT', json: d}); busy(''); toast(n + ' actualizada'); await cargar(); fichaMarca(n); }
+    catch (e) { busy(''); error(e); }
+  };
+}
+function borrarMarca(n) {
+  modal('Borrar ' + n, `
+    <p class="ftxt">Se borra la novedad con su historial. Las fotos pasan a la papelera del servidor y queda una constancia con el motivo.</p>
+    <div class="f"><label for="xM">Motivo (obligatorio)</label><textarea id="xM" rows="2"></textarea></div>
+  `, '<button type="button" id="xX">Cancelar</button><button type="button" class="danger" id="xOk">Borrar definitivamente</button>');
+  $('xX').onclick = () => fichaMarca(n);
+  $('xOk').onclick = async () => {
+    const motivo = $('xM').value.trim(); if (motivo.length < 5) { toast('Escribí el motivo del borrado.', true); return; }
+    try { busy('Borrando…'); await api('/marcas/' + encodeURIComponent(n) + '/borrar', {method: 'POST', json: {motivo}}); busy(''); cerrarModal(); toast(n + ' borrada'); await cargar(); }
+    catch (e) { busy(''); error(e); }
+  };
+}
 
 /* ───────── reportes (consulta, inspector y superiores) ───────── */
 const REP = {desde: '', hasta: '', sector: '', estado: '', rubro: ''};
@@ -869,6 +1068,7 @@ async function cargar() {
   S.hist = d.historial; S.fotos = d.fotos;
   S.cat = {}; d.catalogo.forEach(c => { c.activo = !!c.activo; S.cat[c.codigo] = c; });
   S.usuarios = {}; d.usuarios.forEach(u => { S.usuarios[u.id] = u; });
+  S.marcas = {}; (d.marcas || []).forEach(m => { S.marcas[m.n] = m; });
   GRUPOS = {}; d.grupos.forEach(g => { GRUPOS[g.uf] = String(g.ufs).split(',').map(Number); });
   const b = $('banner');
   if (!Object.values(S.cat).some(c => c.activo)) { b.hidden = false; b.textContent = 'No hay tipos de faltas cargados. Un administrador tiene que cargarlos en Tipos de faltas.'; }
@@ -892,6 +1092,7 @@ async function iniciar() {
   try { YO = await api('/yo'); } catch (e) { return; }
   $('uName').innerHTML = `<b>${esc(YO.nombre)}</b> · ${esc(YO.rol)}`;
   $('bUsr').hidden = !puede('admin');
+  $('bLapiz').hidden = !puede('inspector');
   applyVB();
   await cargar().catch(error);
   abrirEventos();

@@ -109,7 +109,7 @@ CREATE TABLE secuencia (                                  -- numeración V-, F-,
   prefijo  VARCHAR(2) PRIMARY KEY,
   ultimo   INT UNSIGNED NOT NULL DEFAULT 0
 ) ENGINE=InnoDB;
-INSERT INTO secuencia VALUES ('V',0),('F',0),('P',0);
+INSERT INTO secuencia VALUES ('V',0),('F',0),('P',0),('M',0);
 
 -- ───────── Inspección ─────────
 CREATE TABLE visita (
@@ -159,6 +159,30 @@ CREATE TABLE hallazgo (
   FOREIGN KEY (id_usuario)   REFERENCES usuario(id_usuario),
   INDEX ix_hallazgo_estado_rev (estado, fecha_revision),
   INDEX ix_hallazgo_codigo (codigo)
+) ENGINE=InnoDB;
+
+CREATE TABLE marca (
+  nro_marca       VARCHAR(10) PRIMARY KEY,                    -- M-0001 (subtipo de registro)
+  fecha           DATE NOT NULL,
+  tipo            VARCHAR(60) NOT NULL,                       -- categoría: bache, luminaria, arbolado…
+  descripcion     VARCHAR(500) NOT NULL,
+  forma           ENUM('Punto','Línea','Área') NOT NULL,
+  geometria       JSON NOT NULL,                              -- [[x,y],…] en coordenadas del plano
+  lugar           ENUM('Calle','Peatonal','Plaza','Espacio verde','Club / deportes','Perímetro','Otro') NOT NULL DEFAULT 'Calle',
+  id_sector       TINYINT UNSIGNED NULL,
+  estado          ENUM('Relevado','Informado a mantenimiento','En reparación','Reparado','No corresponde') NOT NULL DEFAULT 'Relevado',
+  fecha_revision  DATE NULL,
+  observacion     TEXT,
+  fecha_cierre    DATE NULL,
+  lat             DECIMAL(9,6) NULL,
+  lon             DECIMAL(9,6) NULL,
+  id_usuario      INT UNSIGNED NOT NULL,
+  creado          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (nro_marca)  REFERENCES registro(nro_registro) ON DELETE CASCADE,
+  FOREIGN KEY (id_sector)  REFERENCES sector(id_sector),
+  FOREIGN KEY (id_usuario) REFERENCES usuario(id_usuario),
+  CHECK (JSON_VALID(geometria)),
+  INDEX ix_marca_estado (estado, fecha_revision)
 ) ENGINE=InnoDB;
 
 CREATE TABLE historial (

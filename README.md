@@ -106,7 +106,7 @@ for f in db/migraciones/*.sql; do
 done
 ```
 
-En Codespaces lo hace solo `scripts/codespace-inicio.sh`.
+En Codespaces lo hace solo `scripts/codespace-inicio.sh`. En Railway hay que correr cada archivo nuevo en la consola de la base (Data → Query).
 
 ## Backup
 
@@ -177,6 +177,23 @@ Menú **Reportes**, disponible para consulta, inspector, supervisor y admin.
 - Detalle de las faltas (las 500 más recientes en pantalla; tocar una fila abre la ficha) y **Descargar Excel (CSV)** con todas las del filtro.
 - **Imprimir / PDF** arma una versión para imprimir o guardar como PDF desde el navegador.
 
+## Novedades en espacios comunes
+
+El botón del lápiz (✎), sobre el plano, sirve para marcar problemas en calles, plazas, peatonales y otros espacios comunes. Lo ven el inspector, el supervisor y el admin.
+
+1. Tocar ✎ y elegir **Punto** (un bache, una luminaria), **Línea** (un tramo de calle o de cerco) o **Área** (una plaza, un espacio verde).
+2. Tocar el plano para ubicarla. Arrastrar sigue moviendo el plano. **📍 Mi ubicación** usa el GPS del celular. **Deshacer** borra el último punto y Esc cancela.
+3. Completar el tipo, el lugar, la descripción, la fecha de revisión y las fotos.
+
+Cada novedad recibe un número M-0001 y se ve en el plano con un color según su estado: Relevado (naranja), Informado a mantenimiento (amarillo), En reparación (azul) y cerrada (verde tenue). Al tocarla se abre la ficha, con historial y fotos. Las abiertas aparecen en **Agenda → Espacios comunes**.
+
+| Acción | consulta | inspector | supervisor / admin |
+|---|---|---|---|
+| Ver | ✔ | ✔ | ✔ |
+| Pasar a "Informado a mantenimiento" o "En reparación" | ✔ (solo las abiertas) | ✔ | ✔ |
+| Crear, editar, redibujar y cerrar (Reparado o No corresponde) | | ✔ | ✔ |
+| Borrar (con motivo) | | | ✔ |
+
 ## Entorno de prueba en Railway
 
 Para dejar la app en línea de forma permanente durante la prueba, **solo con datos ficticios** (Railway guarda los datos fuera del país).
@@ -208,7 +225,7 @@ En este modo la API sirve también la web (sin nginx) y agrega las mismas cabece
 
 ## Pendiente (próximas etapas)
 
-- Observaciones preventivas, marcas en áreas comunes, urgencias y regularización. El modelo ya está en el DER.
+- Observaciones preventivas, urgencias y regularización. El modelo ya está en el DER.
 - Funcionamiento sin señal: guardar en el celular y enviar al recuperar conexión.
 - Exportar a planilla y armar el PDF de notificación.
 - Migrar los datos actuales de la planilla de Construcciones.

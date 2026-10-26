@@ -287,3 +287,44 @@ def test_abm_usuarios(usuarios):
     assert adm.delete(f"/api/usuarios/{adm_id}", headers=H).status_code == 400
     acciones = {x["accion"] for x in adm.get("/api/usuarios/historial").json() if x["usuario"] == nu}
     assert {"alta", "modificación", "clave", "baja", "eliminado"} <= acciones
+
+
+def test_novedades_espacios_comunes(usuarios):
+    import json
+    ins, con, sup = cliente(usuarios["inspector"]), cliente(usuarios["consulta"]), cliente(usuarios["supervisor"])
+    area = [[1000, 1000], [1100, 1000], [1100, 1100]]
+    datos = {"forma": "A", "geo": area, "tipo": "Pasto alto / falta de limpieza", "descripcion": "Plaza central sin cortar",
+             "lugar": "Plaza", "estado": "Relevado", "revision": "2099-01-01", "sector": "II", "lat": -34.6, "lon": -58.86}
+    # consulta no da de alta; dibujo inválido rechazado
+    assert con.post("/api/marcas", data={"datos": json.dumps(datos)}, headers=H).status_code == 403
+    malo = dict(datos, geo=area[:2])
+    assert ins.post("/api/marcas", data={"datos": json.dumps(malo)}, headers=H).status_code == 400
+    r = ins.post("/api/marcas", data={"datos": json.dumps(datos)}, files=[("f_marca", ("a.jpg", jpeg(), "image/jpeg"))], headers=H)
+    assert r.status_code == 200, r.text
+    n = r.json()["n"]
+    m = next(x for x in ins.get("/api/estado").json()["marcas"] if x["n"] == n)
+    assert m["forma"] == "Área" and m["geo"] == area and m["sector"] == "Sector II" and m["estado"] == "Relevado"
+
+    # edición y redibujo (inspector); consulta no edita
+    assert con.put(f"/api/marcas/{n}", json={"descripcion": "x"}, headers=H).status_code == 403
+    r = ins.put(f"/api/marcas/{n}", json={"descripcion": "Plaza central, pasto de 40 cm", "forma": "P", "geo": [[1050, 1050]]}, headers=H)
+    assert r.status_code == 200, r.text
+
+    # consulta gestiona solo estados intermedios
+    ok = lambda cl, e: cl.post(f"/api/marcas/{n}/estado", data={"datos": json.dumps({"estado": e, "nota": "t"})}, headers=H).status_code
+    assert ok(con, "Reparado") == 403
+    assert ok(con, "Informado a mantenimiento") == 200
+    assert ok(ins, "Reparado") == 200
+    assert ok(con, "En reparación") == 403            # cerrada: solo inspector reabre
+    est = ins.get("/api/estado").json()
+    m = next(x for x in est["marcas"] if x["n"] == n)
+    assert m["forma"] == "Punto" and m["estado"] == "Reparado" and m["cierre"] and not m["revision"]
+    hist = [x["cambio"] for x in est["historial"] if x["reg"] == n]
+    assert hist[0].startswith("Alta en plaza") and hist[1].startswith("Editada") and len(hist) == 4
+
+    # borrado: solo supervisor+, con motivo
+    assert ins.post(f"/api/marcas/{n}/borrar", json={"motivo": "prueba"}, headers=H).status_code == 403
+    assert sup.post(f"/api/marcas/{n}/borrar", json={"motivo": "Prueba automática"}, headers=H).status_code == 200
+    with conexion() as c:
+        assert fila(c, "SELECT COUNT(*) n FROM marca WHERE nro_marca=%s", (n,))["n"] == 0
+        assert fila(c, "SELECT COUNT(*) n FROM foto WHERE nro_registro=%s", (n,))["n"] == 0

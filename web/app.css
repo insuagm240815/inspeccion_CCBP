@@ -228,3 +228,31 @@ button.link:hover{color:var(--ink);text-decoration:underline}
 .row.nowrap input{flex:1}
 .credencial{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;padding:14px;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-soft);font-size:15px}
 .credencial span{color:var(--muted);font-size:13px;align-self:center}
+/* ───────── espacios comunes ───────── */
+:root{--mk-rel:#D9622B;--mk-inf:#C99A06;--mk-rep:#2F6FCE;--mk-ok:#4E9A62}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--mk-rel:#F08A50;--mk-inf:#E6C04A;--mk-rep:#79A8F0;--mk-ok:#6FBE84}}
+:root[data-theme="dark"]{--mk-rel:#F08A50;--mk-inf:#E6C04A;--mk-rep:#79A8F0;--mk-ok:#6FBE84}
+.mk{cursor:pointer;vector-effect:non-scaling-stroke}
+.mk-rel{--mk:var(--mk-rel)} .mk-inf{--mk:var(--mk-inf)} .mk-rep{--mk:var(--mk-rep)} .mk-ok{--mk:var(--mk-ok)}
+.mk-p{fill:var(--mk);stroke:#fff;stroke-width:2.5}
+.mk-l{fill:none;stroke:var(--mk);stroke-width:6;stroke-linecap:round;stroke-linejoin:round}
+.mk-l-halo{fill:none;stroke:#fff;stroke-opacity:.8;stroke-width:10;stroke-linecap:round;stroke-linejoin:round}
+.mk-a{fill:var(--mk);fill-opacity:.28;stroke:var(--mk);stroke-width:2.5;stroke-dasharray:6 4}
+.mk.mk-ok{opacity:.45}
+.mk.dim{opacity:.15}
+.mk:hover{filter:brightness(1.15)}
+.pill.mk-rel{color:var(--mk-rel)} .pill.mk-inf{color:var(--mk-inf)} .pill.mk-rep{color:var(--mk-rep)} .pill.mk-ok{color:var(--mk-ok)}
+#map.dibujando{cursor:crosshair}
+#map.dibujando .lot{cursor:crosshair}
+.dib-L{fill:none;stroke:var(--sel);stroke-width:4;stroke-dasharray:8 5;vector-effect:non-scaling-stroke;pointer-events:none}
+.dib-A{fill:var(--sel);fill-opacity:.18;stroke:var(--sel);stroke-width:3;stroke-dasharray:8 5;vector-effect:non-scaling-stroke;pointer-events:none}
+.dib-v{fill:#fff;stroke:var(--sel);stroke-width:3;vector-effect:non-scaling-stroke;pointer-events:none}
+.dibujo{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:6;background:var(--surface);border:2px solid var(--sel);border-radius:10px;
+  padding:10px 12px;display:flex;flex-direction:column;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,.2);width:min(560px,calc(100% - 24px))}
+.dibujo .row{justify-content:space-between}
+.dibujo p{margin:0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:5px 12px}
+.seg button[aria-pressed="true"]{background:var(--sel);color:#fff}
+.mapctl button#bLapiz{font-size:20px}
+.legend i.lg-mk{background:var(--mk-rel);border-radius:50%;box-shadow:0 0 0 2px #fff inset}
