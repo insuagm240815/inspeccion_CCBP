@@ -41,6 +41,12 @@ for u in "inspector:Inspector de prueba:inspector" "consulta:Consulta de prueba:
 done
 printf 'Usuarios de prueba: inspector, consulta, supervisor, admin\nClave (la misma para todos): %s\n' "$CLAVE" > datos/.usuarios-demo
 
+# Intentar dejar el puerto 8080 público (si no se puede, hacerlo a mano en la pestaña Puertos)
+if command -v gh >/dev/null 2>&1 && [ -n "${CODESPACE_NAME:-}" ]; then
+  gh codespace ports visibility 8080:public -c "$CODESPACE_NAME" >/dev/null 2>&1 \
+    && echo "Puerto 8080: público." || echo "No pude hacer público el 8080: cambialo a mano en la pestaña Puertos."
+fi
+
 echo
 echo "════════════════════════════════════════════════════"
 echo " App lista en el puerto 8080 (pestaña PORTS)."
