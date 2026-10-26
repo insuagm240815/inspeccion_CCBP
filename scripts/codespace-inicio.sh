@@ -18,6 +18,7 @@ echo "Esperando a Docker…"
 for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 2; done
 
 docker compose up -d --build
+docker compose restart web >/dev/null   # nginx toma la IP nueva de la API si se reconstruyó
 
 echo "Esperando a la API…"
 for i in $(seq 1 60); do curl -fs http://127.0.0.1:8080/api/salud >/dev/null 2>&1 && break; sleep 3; done
