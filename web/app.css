@@ -221,3 +221,10 @@ a.btn:hover{border-color:var(--accent)}
   .rep-sec{break-inside:avoid}
 }
 #rCuerpo{display:flex;flex-direction:column;gap:20px;transition:opacity .15s}
+/* ───────── usuarios ───────── */
+button.link{background:none;border:0;padding:4px 6px;color:var(--muted);font-size:13px}
+button.link:hover{color:var(--ink);text-decoration:underline}
+.row.nowrap{flex-wrap:nowrap}
+.row.nowrap input{flex:1}
+.credencial{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;padding:14px;border:1px dashed var(--accent);border-radius:8px;background:var(--accent-soft);font-size:15px}
+.credencial span{color:var(--muted);font-size:13px;align-self:center}

@@ -240,3 +240,50 @@ def test_reportes(usuarios):
     csv = con.get("/api/reportes.csv", params={"sector": "Golf"})
     assert csv.status_code == 200 and csv.headers["content-type"].startswith("text/csv")
     assert csv.text.startswith("﻿N° falta;") and ";2900;" in csv.text
+
+
+def test_abm_usuarios(usuarios):
+    import json
+    adm, ins = cliente(usuarios["admin"]), cliente(usuarios["inspector"])
+    nu = "t_nuevo_" + SUF
+    assert ins.get("/api/usuarios").status_code == 403
+    assert ins.post("/api/usuarios", json={"usuario": nu, "nombre": "X", "rol": "inspector", "clave": CLAVE}, headers=H).status_code == 403
+    # alta y validaciones
+    assert adm.post("/api/usuarios", json={"usuario": "A B", "nombre": "X", "rol": "inspector", "clave": CLAVE}, headers=H).status_code == 400
+    assert adm.post("/api/usuarios", json={"usuario": nu, "nombre": "X", "rol": "inspector", "clave": "corta"}, headers=H).status_code == 400
+    assert adm.post("/api/usuarios", json={"usuario": nu, "nombre": "X", "rol": "jefe", "clave": CLAVE}, headers=H).status_code == 400
+    r = adm.post("/api/usuarios", json={"usuario": nu, "nombre": "Nuevo Usuario", "rol": "consulta", "clave": CLAVE}, headers=H)
+    assert r.status_code == 200, r.text
+    uid = r.json()["id"]
+    assert adm.post("/api/usuarios", json={"usuario": nu, "nombre": "X", "rol": "consulta", "clave": CLAVE}, headers=H).status_code == 409
+    nuevo = cliente(nu)                                                  # puede ingresar
+    assert nuevo.get("/api/yo").json()["rol"] == "consulta"
+    # cambio de perfil: rige en el momento, sin volver a ingresar
+    assert adm.put(f"/api/usuarios/{uid}", json={"rol": "inspector", "nombre": "Nuevo Usuario"}, headers=H).status_code == 200
+    assert nuevo.get("/api/yo").json()["rol"] == "inspector"
+    # cambio de su propia clave
+    assert nuevo.post("/api/yo/clave", json={"actual": "mala", "nueva": "otra-clave-123"}, headers=H).status_code == 400
+    assert nuevo.post("/api/yo/clave", json={"actual": CLAVE, "nueva": "otra-clave-123"}, headers=H).status_code == 200
+    assert TestClient(app).post("/api/login", json={"usuario": nu, "clave": "otra-clave-123"}, headers=H).status_code == 200
+    # el admin restablece la clave: se cierran sus sesiones
+    assert adm.post(f"/api/usuarios/{uid}/clave", json={"clave": CLAVE}, headers=H).status_code == 200
+    assert nuevo.get("/api/yo").status_code == 401
+    nuevo = cliente(nu)
+    # baja: no puede entrar más y se cierran sus sesiones
+    assert adm.put(f"/api/usuarios/{uid}", json={"activo": False}, headers=H).status_code == 200
+    assert nuevo.get("/api/yo").status_code == 401
+    assert TestClient(app).post("/api/login", json={"usuario": nu, "clave": CLAVE}, headers=H).status_code == 401
+    # sin actividad → se puede eliminar; con actividad → no
+    assert adm.delete(f"/api/usuarios/{uid}", headers=H).status_code == 200
+    ins_id = ins.get("/api/yo").json()["id"]
+    with conexion() as cx:
+        hoy = str(fila(cx, "SELECT CURDATE() d")["d"])
+    ins.post("/api/visitas", data={"datos": json.dumps({"uf": 12, "fecha": hoy})}, headers=H)
+    assert adm.delete(f"/api/usuarios/{ins_id}", headers=H).status_code == 409
+    # protecciones del propio admin
+    adm_id = adm.get("/api/yo").json()["id"]
+    assert adm.put(f"/api/usuarios/{adm_id}", json={"rol": "inspector"}, headers=H).status_code == 400
+    assert adm.put(f"/api/usuarios/{adm_id}", json={"activo": False}, headers=H).status_code == 400
+    assert adm.delete(f"/api/usuarios/{adm_id}", headers=H).status_code == 400
+    acciones = {x["accion"] for x in adm.get("/api/usuarios/historial").json() if x["usuario"] == nu}
+    assert {"alta", "modificación", "clave", "baja", "eliminado"} <= acciones

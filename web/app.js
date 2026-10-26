@@ -719,6 +719,147 @@ async function cargarRep() {
 }
 $('bRep').onclick = reportes;
 
+/* ───────── usuarios (ABM solo admin) y cambio de la clave propia ───────── */
+const ROLES = [['consulta', 'Consulta', 'Ve todo y gestiona faltas (notificada / en proceso)'], ['inspector', 'Inspector', 'Carga visitas, faltas, fotos y GPS'],
+  ['supervisor', 'Supervisor', 'Como inspector, y además borra faltas'], ['admin', 'Administrador', 'Todo: tipos de faltas y usuarios']];
+const rolTxt = r => (ROLES.find(x => x[0] === r) || [r, r])[1];
+const claveAzar = () => { const a = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const v = new Uint32Array(14); crypto.getRandomValues(v); return [...v].map(x => a[x % a.length]).join(''); };
+const fechaHora = s => s ? fmt(s.slice(0, 10)) + ' ' + s.slice(11, 16) : 'Nunca';
+let usrFiltro = '', usrBajas = false;
+async function usuarios() {
+  let lista;
+  try { lista = await api('/usuarios'); } catch (e) { error(e); return; }
+  const q = usrFiltro.toLowerCase();
+  const vis = lista.filter(u => (u.activo || usrBajas) && (!q || (u.usuario + ' ' + u.nombre + ' ' + rolTxt(u.rol)).toLowerCase().includes(q)));
+  const nBajas = lista.filter(u => !u.activo).length;
+  const m = modal('Usuarios', `
+    <div class="row cat-bar">
+      <input id="uQ" type="search" placeholder="Buscar usuario, nombre o perfil" value="${esc(usrFiltro)}" aria-label="Buscar usuarios">
+      <label class="row chk"><input type="checkbox" id="uBajas" ${usrBajas ? 'checked' : ''}> Ver dados de baja (${nBajas})</label>
+      <button type="button" class="pri" id="uNuevo">+ Nuevo usuario</button>
+    </div>
+    <div class="scroll"><table class="cat"><thead><tr><th>Usuario</th><th>Nombre</th><th>Perfil</th><th>Último ingreso</th><th></th></tr></thead><tbody>
+    ${vis.map(u => `<tr class="${u.activo ? '' : 'baja'}"><td class="mono">${esc(u.usuario)}${u.id === YO.id ? ' <span class="tag-ej">VOS</span>' : ''}${u.activo ? '' : '<span class="tag-baja">BAJA</span>'}</td>
+      <td>${esc(u.nombre)}</td><td><span class="pill n">${esc(rolTxt(u.rol))}</span></td><td>${fechaHora(u.ultimo_ingreso)}</td>
+      <td class="acc"><button type="button" data-ue="${u.id}">Editar</button><button type="button" data-uc="${u.id}">Clave</button>${u.id === YO.id ? '' : u.activo
+        ? `<button type="button" class="danger" data-ub="${u.id}">${u.actividad ? 'Dar de baja' : 'Eliminar'}</button>`
+        : `<button type="button" data-ua="${u.id}">Reactivar</button>`}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Ningún usuario coincide.</td></tr>'}
+    </tbody></table></div>
+    <details id="uHistD"><summary class="sum">Historial de cambios de usuarios</summary><div id="uHist" class="note">Cargando…</div></details>
+  `);
+  m.querySelector('.dlg').classList.add('ancho');
+  const porId = id => lista.find(u => u.id === +id);
+  let tq = 0;
+  $('uQ').oninput = e => { clearTimeout(tq); tq = setTimeout(() => { usrFiltro = e.target.value; const pos = e.target.selectionStart; usuarios().then(() => { const i = $('uQ'); if (i) { i.focus(); try { i.setSelectionRange(pos, pos); } catch (x) {} } }); }, 300); };
+  $('uBajas').onchange = e => { usrBajas = e.target.checked; usuarios(); };
+  $('uNuevo').onclick = () => formUsuario(null);
+  m.querySelectorAll('[data-ue]').forEach(b => { b.onclick = () => formUsuario(porId(b.dataset.ue)); });
+  m.querySelectorAll('[data-uc]').forEach(b => { b.onclick = () => formClave(porId(b.dataset.uc)); });
+  m.querySelectorAll('[data-ua]').forEach(b => { b.onclick = async () => {
+    try { busy('Guardando…'); await api('/usuarios/' + b.dataset.ua, {method: 'PUT', json: {activo: true}}); busy(''); toast('Usuario reactivado'); usuarios(); } catch (e) { busy(''); error(e); }
+  }; });
+  m.querySelectorAll('[data-ub]').forEach(b => { b.onclick = () => bajaUsuario(porId(b.dataset.ub)); });
+  $('uHistD').ontoggle = async e => {
+    if (!e.target.open) return;
+    try {
+      const h = await api('/usuarios/historial');
+      $('uHist').innerHTML = h.length ? `<div class="timeline">${h.map(x => `<div><span class="d">${esc(fechaHora(x.fecha))} · ${esc(x.actor)}</span><br><b>${esc(x.usuario)}</b> — ${esc(x.accion)}${x.detalle ? ': ' + esc(x.detalle) : ''}</div>`).join('')}</div>` : 'Todavía no hay cambios registrados.';
+    } catch (x) { $('uHist').textContent = 'No se pudo cargar el historial.'; }
+  };
+}
+const rolesOpts = sel => ROLES.map(([v, l, d]) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${l} — ${d}</option>`).join('');
+function campoClave(id) {
+  return `<div class="f"><label for="${id}">Clave (mínimo 10 caracteres)</label><div class="row nowrap"><input id="${id}" class="mono" autocomplete="new-password" minlength="10"><button type="button" data-gen="${id}">Generar</button></div></div>`;
+}
+function conectarGen(m) { m.querySelectorAll('[data-gen]').forEach(b => { b.onclick = () => { $(b.dataset.gen).value = claveAzar(); }; }); }
+function mostrarClave(usuario, clave, titulo) {
+  modal(titulo, `
+    <p class="ftxt">Pasale estos datos a la persona por un canal privado. <b>La clave no se vuelve a mostrar.</b></p>
+    <div class="credencial"><span>Usuario</span><b class="mono">${esc(usuario)}</b><span>Clave</span><b class="mono" id="cTxt">${esc(clave)}</b></div>
+    <p class="note">Recomendale que la cambie desde su nombre, arriba a la derecha, la primera vez que entre.</p>
+  `, '<button type="button" id="cCopy">Copiar</button><button type="button" class="pri" id="cOk">Listo</button>');
+  $('cCopy').onclick = () => { navigator.clipboard.writeText(`Usuario: ${usuario}\nClave: ${clave}`).then(() => toast('Copiado'), () => toast('No se pudo copiar: seleccioná el texto.', true)); };
+  $('cOk').onclick = usuarios;
+}
+function formUsuario(u) {
+  const nuevo = !u;
+  modal(nuevo ? 'Nuevo usuario' : 'Editar ' + u.usuario, `
+    <div class="grid2">
+      <div class="f"><label for="nU">Usuario</label><input id="nU" class="mono" maxlength="40" autocomplete="off" value="${esc(u ? u.usuario : '')}" ${nuevo ? '' : 'disabled'} placeholder="ej.: jperez"></div>
+      <div class="f"><label for="nN">Nombre y apellido</label><input id="nN" maxlength="80" value="${esc(u ? u.nombre : '')}"></div>
+    </div>
+    <div class="f"><label for="nR">Perfil</label><select id="nR" ${u && u.id === YO.id ? 'disabled' : ''}>${rolesOpts(u ? u.rol : 'inspector')}</select></div>
+    ${nuevo ? campoClave('nC') : ''}
+    ${u && u.id === YO.id ? '<p class="note">No podés cambiar tu propio perfil.</p>' : ''}
+  `, '<button type="button" id="nX">Cancelar</button><button type="button" class="pri" id="nOk">Guardar</button>');
+  conectarGen($('modal'));
+  if (nuevo) $('nC').value = claveAzar();
+  $('nU') && ($('nU').oninput = e => { e.target.value = e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''); });
+  $('nX').onclick = usuarios;
+  $('nOk').onclick = async () => {
+    const d = {nombre: $('nN').value.trim(), rol: $('nR').value};
+    if (!d.nombre) { toast('Escribí el nombre y apellido.', true); return; }
+    try {
+      busy('Guardando…');
+      if (nuevo) {
+        d.usuario = $('nU').value.trim(); d.clave = $('nC').value;
+        if (d.usuario.length < 3) { busy(''); toast('El usuario tiene que tener al menos 3 caracteres.', true); return; }
+        if (d.clave.length < 10) { busy(''); toast('La clave tiene que tener al menos 10 caracteres.', true); return; }
+        await api('/usuarios', {method: 'POST', json: d});
+        busy(''); await cargar(); mostrarClave(d.usuario, d.clave, 'Usuario creado');
+      } else {
+        await api('/usuarios/' + u.id, {method: 'PUT', json: d});
+        busy(''); toast(u.usuario + ' actualizado'); await cargar(); usuarios();
+      }
+    } catch (e) { busy(''); error(e); }
+  };
+}
+function formClave(u) {
+  modal('Nueva clave · ' + u.usuario, `
+    ${campoClave('kC')}
+    <p class="note">${u.id === YO.id ? 'Para tu propio usuario conviene usar “Cambiar mi clave” desde tu nombre, arriba.' : 'Al guardarla se cierran las sesiones abiertas de este usuario: tiene que volver a ingresar con la clave nueva.'}</p>
+  `, '<button type="button" id="kX">Cancelar</button><button type="button" class="pri" id="kOk">Guardar clave</button>');
+  conectarGen($('modal')); $('kC').value = claveAzar();
+  $('kX').onclick = usuarios;
+  $('kOk').onclick = async () => {
+    const clave = $('kC').value;
+    if (clave.length < 10) { toast('La clave tiene que tener al menos 10 caracteres.', true); return; }
+    try { busy('Guardando…'); await api('/usuarios/' + u.id + '/clave', {method: 'POST', json: {clave}}); busy(''); mostrarClave(u.usuario, clave, 'Clave restablecida'); }
+    catch (e) { busy(''); error(e); }
+  };
+}
+function bajaUsuario(u) {
+  const elim = !u.actividad;
+  modal((elim ? 'Eliminar ' : 'Dar de baja ') + u.usuario, `
+    <p class="ftxt"><b>${esc(u.nombre)}</b> · ${esc(rolTxt(u.rol))}</p>
+    <p class="ftxt">${elim ? 'No tiene actividad registrada, así que se elimina.' : 'Tiene visitas o cambios cargados, así que no se borra: deja de poder ingresar (se cierran sus sesiones) y todo lo que cargó conserva su nombre. Se puede reactivar.'}</p>
+  `, `<button type="button" id="bX">Cancelar</button><button type="button" class="danger" id="bOk">${elim ? 'Eliminar' : 'Dar de baja'}</button>`);
+  $('bX').onclick = usuarios;
+  $('bOk').onclick = async () => {
+    try {
+      busy('Guardando…');
+      if (elim) await api('/usuarios/' + u.id, {method: 'DELETE'}); else await api('/usuarios/' + u.id, {method: 'PUT', json: {activo: false}});
+      busy(''); toast(u.usuario + (elim ? ' eliminado' : ' dado de baja')); await cargar(); usuarios();
+    } catch (e) { busy(''); error(e); }
+  };
+}
+function miClave() {
+  modal('Cambiar mi clave', `
+    <div class="f"><label for="mA">Clave actual</label><input id="mA" type="password" autocomplete="current-password"></div>
+    <div class="f"><label for="mN">Clave nueva (mínimo 10 caracteres)</label><input id="mN" type="password" autocomplete="new-password" minlength="10"></div>
+    <div class="f"><label for="mR">Repetí la clave nueva</label><input id="mR" type="password" autocomplete="new-password"></div>
+  `, '<button type="button" data-close>Cancelar</button><button type="button" class="pri" id="mOk">Cambiar clave</button>');
+  $('mOk').onclick = async () => {
+    const actual = $('mA').value, nueva = $('mN').value;
+    if (nueva.length < 10) { toast('La clave nueva tiene que tener al menos 10 caracteres.', true); return; }
+    if (nueva !== $('mR').value) { toast('Las claves nuevas no coinciden.', true); return; }
+    try { busy('Guardando…'); await api('/yo/clave', {method: 'POST', json: {actual, nueva}}); busy(''); cerrarModal(); toast('Clave cambiada'); }
+    catch (e) { busy(''); error(e); }
+  };
+}
+$('bUsr').onclick = usuarios;
+$('uName').onclick = () => { if (YO) miClave(); };
+
 /* ───────── datos y aviso en vivo ───────── */
 async function cargar() {
   const d = await api('/estado');
@@ -750,6 +891,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && YO
 async function iniciar() {
   try { YO = await api('/yo'); } catch (e) { return; }
   $('uName').innerHTML = `<b>${esc(YO.nombre)}</b> · ${esc(YO.rol)}`;
+  $('bUsr').hidden = !puede('admin');
   applyVB();
   await cargar().catch(error);
   abrirEventos();

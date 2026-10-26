@@ -158,6 +158,15 @@ Levanta la app completa (MariaDB + API + nginx) en una máquina de GitHub, con d
 
 El Codespace se apaga solo tras 30 minutos sin uso. Al volver a abrirlo, los datos siguen ahí. Si se borra el Codespace, se pierden los datos de prueba.
 
+## Usuarios
+
+Menú **Usuarios** (solo admin): buscar, crear (*+ Nuevo usuario*, con clave generada que se muestra una sola vez), editar nombre y perfil, restablecer la clave (cierra las sesiones abiertas de esa persona) y dar de baja o reactivar.
+- Un usuario **sin actividad** se elimina; uno **con actividad** se da de baja: no puede ingresar más, pero lo que cargó conserva su nombre.
+- El admin no puede quitarse su propio perfil ni darse de baja, y siempre tiene que quedar al menos un admin activo.
+- Los cambios de perfil y las bajas rigen en el momento, sin que la persona tenga que volver a ingresar.
+- Cada persona cambia su propia clave tocando su nombre, arriba a la derecha.
+- Todo queda en *Historial de cambios de usuarios* (tabla `usuario_log`). La consola (`python -m app.usuarios`) sigue disponible como respaldo.
+
 ## Reportes
 
 Menú **Reportes**, disponible para consulta, inspector, supervisor y admin.

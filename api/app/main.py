@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from . import arranque
 from . import fotos as F
 from .db import conexion, ejecutar, fila, filas, hoy, siguiente
-from .seguridad import COOKIE, COOKIE_SECURE, SESION_HORAS, exigir, ip_de, login, logout, usuario_de
+from .seguridad import COOKIE, COOKIE_SECURE, PH, SESION_HORAS, _sha, exigir, hash_clave, ip_de, login, logout, usuario_de
 
 app = FastAPI(title="Inspección CCBP", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -520,6 +520,186 @@ def api_cat_historial(req: Request):
     with conexion() as c:
         return filas(c, """SELECT l.fecha, l.codigo, l.accion, l.detalle, u.nombre usuario FROM catalogo_log l
                            JOIN usuario u ON u.id_usuario=l.id_usuario ORDER BY l.id DESC LIMIT 200""")
+
+
+# ───────── ABM de usuarios (solo admin) y cambio de la clave propia ─────────
+USUARIO_OK = re.compile(r"^[a-z0-9][a-z0-9._-]{2,39}$")
+ROLES = ["consulta", "inspector", "supervisor", "admin"]
+
+
+def _usr_log(c, id_obj, usuario, accion, detalle, actor):
+    ejecutar(c, "INSERT INTO usuario_log (id_usuario_obj,usuario,accion,detalle,id_actor) VALUES (%s,%s,%s,%s,%s)",
+             (id_obj, usuario, accion, (detalle or "")[:300], actor))
+
+
+def _clave_nueva(clave):
+    try:
+        return hash_clave(clave or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def _admins_activos(c, excepto=None):
+    return fila(c, "SELECT COUNT(*) n FROM usuario WHERE rol='admin' AND activo AND id_usuario<>%s", (excepto or 0,))["n"]
+
+
+@app.get("/api/usuarios")
+def api_usuarios(req: Request):
+    exigir(req, "admin")
+    with conexion() as c:
+        return filas(c, """SELECT u.id_usuario id, u.usuario, u.nombre, u.rol, u.activo, u.creado,
+                           (SELECT MAX(a.fecha) FROM acceso_log a WHERE a.usuario=u.usuario AND a.resultado='ok') ultimo_ingreso,
+                           (SELECT COUNT(*) FROM visita WHERE id_usuario=u.id_usuario) + (SELECT COUNT(*) FROM hallazgo WHERE id_usuario=u.id_usuario)
+                           + (SELECT COUNT(*) FROM historial WHERE id_usuario=u.id_usuario) + (SELECT COUNT(*) FROM foto WHERE id_usuario=u.id_usuario)
+                           + (SELECT COUNT(*) FROM registro_borrado WHERE id_usuario=u.id_usuario)
+                           + (SELECT COUNT(*) FROM catalogo_log WHERE id_usuario=u.id_usuario)
+                           + (SELECT COUNT(*) FROM usuario_log WHERE id_actor=u.id_usuario AND NOT (id_usuario_obj <=> u.id_usuario)) actividad
+                           FROM usuario u ORDER BY u.activo DESC, u.nombre""")
+
+
+@app.post("/api/usuarios")
+async def api_usuario_alta(req: Request):
+    yo = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        usuario = _texto(d.get("usuario"), 40).lower()
+        nombre = _texto(d.get("nombre"), 80)
+        rol = d.get("rol")
+        if not USUARIO_OK.match(usuario):
+            raise HTTPException(400, "El usuario tiene que tener de 3 a 40 caracteres: minúsculas, números, punto, guion o guion bajo.")
+        if not nombre:
+            raise HTTPException(400, "Escribí el nombre y apellido.")
+        if rol not in ROLES:
+            raise HTTPException(400, "Elegí un perfil válido.")
+        h = _clave_nueva(d.get("clave"))
+        with conexion() as c:
+            if fila(c, "SELECT 1 e FROM usuario WHERE usuario=%s", (usuario,)):
+                raise HTTPException(409, f"Ya existe el usuario {usuario}.")
+            nid = ejecutar(c, "INSERT INTO usuario (usuario,nombre,rol,clave_hash) VALUES (%s,%s,%s,%s)", (usuario, nombre, rol, h))
+            _usr_log(c, nid, usuario, "alta", f"{nombre} · {rol}", yo["id_usuario"])
+        return {"ok": True, "id": nid}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+@app.put("/api/usuarios/{uid}")
+async def api_usuario_modif(uid: int, req: Request):
+    yo = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            u = fila(c, "SELECT id_usuario, usuario, nombre, rol, activo FROM usuario WHERE id_usuario=%s FOR UPDATE", (uid,))
+            if not u:
+                raise HTTPException(404, "No existe ese usuario.")
+            nombre = _texto(d.get("nombre"), 80) if d.get("nombre") is not None else u["nombre"]
+            rol = d.get("rol", u["rol"])
+            activo = u["activo"] if d.get("activo") is None else bool(d.get("activo"))
+            if not nombre:
+                raise HTTPException(400, "Escribí el nombre y apellido.")
+            if rol not in ROLES:
+                raise HTTPException(400, "Elegí un perfil válido.")
+            if uid == yo["id_usuario"] and (rol != "admin" or not activo):
+                raise HTTPException(400, "No podés quitarte el perfil de administrador ni darte de baja a vos mismo.")
+            if u["rol"] == "admin" and u["activo"] and (rol != "admin" or not activo) and _admins_activos(c, uid) == 0:
+                raise HTTPException(400, "Tiene que quedar al menos un administrador activo.")
+            ejecutar(c, "UPDATE usuario SET nombre=%s, rol=%s, activo=%s WHERE id_usuario=%s", (nombre, rol, activo, uid))
+            cambios = []
+            if nombre != u["nombre"]: cambios.append(f"nombre: {nombre}")
+            if rol != u["rol"]: cambios.append(f"perfil: {u['rol']} → {rol}")
+            if bool(activo) != bool(u["activo"]):
+                cambios.append("reactivado" if activo else "dado de baja")
+                if not activo:
+                    ejecutar(c, "DELETE FROM sesion WHERE id_usuario=%s", (uid,))      # lo saca en el momento
+            accion = "baja" if (u["activo"] and not activo) else "reactivación" if (activo and not u["activo"]) else "modificación"
+            _usr_log(c, uid, u["usuario"], accion, ", ".join(cambios) or "sin cambios", yo["id_usuario"])
+        return {"ok": True}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+@app.post("/api/usuarios/{uid}/clave")
+async def api_usuario_clave(uid: int, req: Request):
+    yo = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        h = _clave_nueva(d.get("clave"))
+        with conexion() as c:
+            u = fila(c, "SELECT usuario FROM usuario WHERE id_usuario=%s", (uid,))
+            if not u:
+                raise HTTPException(404, "No existe ese usuario.")
+            ejecutar(c, "UPDATE usuario SET clave_hash=%s WHERE id_usuario=%s", (h, uid))
+            if uid != yo["id_usuario"]:
+                ejecutar(c, "DELETE FROM sesion WHERE id_usuario=%s", (uid,))          # tiene que volver a ingresar
+            _usr_log(c, uid, u["usuario"], "clave", "clave restablecida por el administrador", yo["id_usuario"])
+        return {"ok": True}
+
+    return await run_in_threadpool(tx)
+
+
+@app.delete("/api/usuarios/{uid}")
+async def api_usuario_eliminar(uid: int, req: Request):
+    """Solo se elimina un usuario sin actividad registrada; si cargó algo, se da de baja para conservar la autoría."""
+    yo = await run_in_threadpool(exigir, req, "admin", True)
+
+    def tx():
+        if uid == yo["id_usuario"]:
+            raise HTTPException(400, "No podés eliminar tu propio usuario.")
+        with conexion() as c:
+            u = fila(c, "SELECT usuario, rol, activo FROM usuario WHERE id_usuario=%s", (uid,))
+            if not u:
+                raise HTTPException(404, "No existe ese usuario.")
+            if u["rol"] == "admin" and u["activo"] and _admins_activos(c, uid) == 0:
+                raise HTTPException(400, "Tiene que quedar al menos un administrador activo.")
+            usos = fila(c, """SELECT (SELECT COUNT(*) FROM visita WHERE id_usuario=%s) + (SELECT COUNT(*) FROM hallazgo WHERE id_usuario=%s)
+                              + (SELECT COUNT(*) FROM historial WHERE id_usuario=%s) + (SELECT COUNT(*) FROM foto WHERE id_usuario=%s)
+                              + (SELECT COUNT(*) FROM registro_borrado WHERE id_usuario=%s) + (SELECT COUNT(*) FROM catalogo_log WHERE id_usuario=%s)
+                              + (SELECT COUNT(*) FROM usuario_log WHERE id_actor=%s AND NOT (id_usuario_obj <=> %s)) n""", (uid,) * 8)["n"]
+            if usos:
+                raise HTTPException(409, "Este usuario tiene actividad registrada: no se puede eliminar, solo dar de baja.")
+            _usr_log(c, None, u["usuario"], "eliminado", "sin actividad registrada", yo["id_usuario"])
+            ejecutar(c, "UPDATE usuario_log SET id_usuario_obj=NULL WHERE id_usuario_obj=%s", (uid,))
+            ejecutar(c, "UPDATE usuario_log SET id_actor=%s WHERE id_actor=%s", (yo["id_usuario"], uid))   # sus propios cambios de clave
+            ejecutar(c, "DELETE FROM usuario WHERE id_usuario=%s", (uid,))
+        return {"ok": True}
+
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+@app.get("/api/usuarios/historial")
+def api_usuarios_historial(req: Request):
+    exigir(req, "admin")
+    with conexion() as c:
+        return filas(c, """SELECT l.fecha, l.usuario, l.accion, l.detalle, a.nombre actor FROM usuario_log l
+                           JOIN usuario a ON a.id_usuario=l.id_actor ORDER BY l.id DESC LIMIT 200""")
+
+
+@app.post("/api/yo/clave")
+async def api_mi_clave(req: Request):
+    yo = await run_in_threadpool(exigir, req, "consulta", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            h = fila(c, "SELECT clave_hash FROM usuario WHERE id_usuario=%s", (yo["id_usuario"],))["clave_hash"]
+            try:
+                PH.verify(h, d.get("actual") or "")
+            except Exception:
+                raise HTTPException(400, "La clave actual no es correcta.")
+            ejecutar(c, "UPDATE usuario SET clave_hash=%s WHERE id_usuario=%s", (_clave_nueva(d.get("nueva")), yo["id_usuario"]))
+            ejecutar(c, "DELETE FROM sesion WHERE id_usuario=%s AND token_hash<>%s", (yo["id_usuario"], _sha(req.cookies.get(COOKIE, ""))))
+            _usr_log(c, yo["id_usuario"], yo["usuario"], "clave", "cambió su propia clave", yo["id_usuario"])
+        return {"ok": True}
+
+    return await run_in_threadpool(tx)
 
 
 # ───────── Reportes (consulta, inspector y superiores) ─────────
