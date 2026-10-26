@@ -781,7 +781,7 @@ function formMarca(forma, geo, ub) {
       busy('Guardando…');
       const fd = new FormData(); fd.append('datos', JSON.stringify(d)); await agregarFotos(fd, 'marca', archivos('mF'));
       const r = await api('/marcas', {method: 'POST', form: fd});
-      busy(''); cerrarModal(); toast(r.n + ' guardada'); await cargar();
+      busy(''); cerrarModal(); toast(r.n + ' guardada'); await cargar(); fichaMarca(r.n);   // queda abierta para compartirla
     } catch (e) { busy(''); error(e); }
   };
 }
@@ -796,6 +796,7 @@ function fichaMarca(n, centrar_) {
   const abierta_ = M_CERR.indexOf(m.estado) < 0, hs = S.hist.filter(x => x.reg === n);
   const acciones = [
     puede('supervisor') ? '<button type="button" class="danger" id="kBorrar">Borrar</button>' : '',
+    '<button type="button" class="wa" id="kWa">Enviar por WhatsApp</button>',
     puede('inspector') ? '<button type="button" id="kEdit">Editar</button>' : '',
     puede('inspector') ? '<button type="button" id="kRedib">Redibujar</button>' : '',
     puede('inspector') ? '<button type="button" class="pri" id="kEst">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta_ ? '<button type="button" class="pri" id="kEst">Gestionar</button>' : ''),
@@ -813,11 +814,49 @@ function fichaMarca(n, centrar_) {
     ${fotosDe(n)}
     <div class="list"><h3>Historial</h3><div class="timeline">${hs.map(x => `<div><span class="d">${fmt(x.fecha)} · ${quien(x.autor)}</span><br>${esc(x.cambio)}${x.nota ? ' — ' + esc(x.nota) : ''}</div>`).join('') || '<p class="empty">Sin movimientos.</p>'}</div></div>
   `, acciones);
+  const prep = prepararFotos(n);   // se bajan antes del toque: compartir exige hacerlo enseguida del clic
+  $('kWa').onclick = () => compartirMarca(n, prep);
   $('kVer').onclick = () => { cerrarModal(); const [x, y] = centro(m.geo); seguir = false; marcarGps(); centrar(x, y, 400); };
   if ($('kEst')) $('kEst').onclick = () => formEstadoMarca(n);
   if ($('kEdit')) $('kEdit').onclick = () => editarMarca(n);
   if ($('kRedib')) $('kRedib').onclick = () => entrarDibujo(Object.keys(M_FORMA).find(k => M_FORMA[k] === m.forma), n);
   if ($('kBorrar')) $('kBorrar').onclick = () => borrarMarca(n);
+}
+/* compartir por WhatsApp: en el celular usa el menú de compartir del sistema (texto + fotos);
+   en la PC abre WhatsApp Web solo con el texto y la ubicación. */
+const MAX_FOTOS_WA = 4;
+function prepararFotos(n) {
+  if (!navigator.canShare) return Promise.resolve([]);
+  const fs = S.fotos.filter(f => f.reg === n).slice(-MAX_FOTOS_WA);
+  return Promise.all(fs.map(async f => {
+    try { const r = await fetch(fotoURL(f.n)); if (!r.ok) return null; return new File([await r.blob()], `${n}-${f.n}.jpg`, {type: 'image/jpeg'}); }
+    catch (e) { return null; }
+  })).then(a => a.filter(Boolean));
+}
+function textoMarca(m) {
+  const g = m.lat != null ? {lat: +m.lat, lon: +m.lon} : aGeo(...centro(m.geo));
+  return [`*Novedad ${m.n} · ${m.lugar}${m.sector ? ' · ' + m.sector : ''}*`,
+    `Tipo: ${m.tipo}`, m.descripcion, `Estado: ${m.estado}`,
+    `Relevada el ${fmt(m.fecha)} por ${(S.usuarios[m.autor] || {}).nombre || "—"}`,
+    `Ubicación: https://www.google.com/maps/search/?api=1&query=${g.lat},${g.lon}`].join('\n');
+}
+async function compartirMarca(n, prep) {
+  const m = S.marcas[n]; if (!m) return;
+  const text = textoMarca(m);
+  const abrirWa = () => window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
+  if (!navigator.share) {
+    abrirWa();
+    if (S.fotos.some(f => f.reg === n)) toast('Desde la PC WhatsApp no deja adjuntar las fotos por enlace: tocá cada foto, guardala y adjuntala en el chat.');
+    return;
+  }
+  const files = await prep;
+  try {
+    if (files.length && navigator.canShare({files, text})) await navigator.share({files, text, title: 'Novedad ' + n});
+    else { await navigator.share({text, title: 'Novedad ' + n}); if (S.fotos.some(f => f.reg === n)) toast('Este celular no permite compartir las fotos junto con el texto.', true); }
+  } catch (e) {
+    if (e.name === 'AbortError') return;     // el usuario cerró el menú
+    abrirWa();                               // p. ej. se venció el permiso del toque mientras bajaban las fotos
+  }
 }
 function formEstadoMarca(n) {
   const m = S.marcas[n], gestion = !puede('inspector'), lista = gestion ? M_GESTION : M_ESTADOS;

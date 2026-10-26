@@ -194,6 +194,13 @@ Cada novedad guarda la latitud y la longitud del centro del dibujo y cómo se ub
 
 Cada novedad recibe un número M-0001 y se ve en el plano con un color según su estado: Relevado (naranja), Informado a mantenimiento (amarillo), En reparación (azul) y cerrada (verde tenue). Al tocarla se abre la ficha, con historial y fotos. Las abiertas aparecen en **Agenda → Espacios comunes**.
 
+**Enviar por WhatsApp.** Al guardar una novedad se abre su ficha, que tiene el botón **Enviar por WhatsApp** (también disponible en cualquier ficha). Lo que se envía depende del equipo:
+
+- **Celular:** se abre el menú de compartir del teléfono. Se elige WhatsApp y el contacto o grupo (por ejemplo, Mantenimiento). Se envían el número, el tipo, la descripción, el estado, un enlace de Google Maps con la ubicación y hasta 4 fotos.
+- **PC:** se abre WhatsApp Web solo con el texto y la ubicación, porque WhatsApp no permite adjuntar fotos por enlace. Las fotos se guardan desde la ficha y se adjuntan a mano.
+
+Lo que se manda por WhatsApp sale del servidor del country: enviar solo a contactos de trabajo.
+
 | Acción | consulta | inspector | supervisor / admin |
 |---|---|---|---|
 | Ver | ✔ | ✔ | ✔ |
