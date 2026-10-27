@@ -313,3 +313,16 @@ table.cat tr.imp-omitida td{opacity:.6}
 .ruta-p.elegida{fill:var(--ruta);stroke:#fff;stroke-width:3}
 .it-gm{display:flex;flex-direction:column;gap:8px}
 .it-gm a.btn{text-align:center}
+/* barras de modo (lápiz, recorrido, red de calles): franja arriba del plano, sin taparlo */
+.mapwrap{display:flex;flex-direction:column}
+#map{flex:1;min-height:0;height:auto}
+.dibujo,.dibujo.itbar{position:static;order:-1;transform:none;width:auto;left:auto;top:auto;z-index:auto;
+  border:0;border-bottom:2px solid var(--sel);border-radius:0;box-shadow:none;padding:8px 12px;
+  flex-direction:row;flex-wrap:wrap;align-items:center;gap:6px 14px}
+.dibujo[hidden]{display:none}
+.dibujo > .row{flex-wrap:wrap;gap:6px;justify-content:flex-start}
+.dibujo > .row:last-child{margin-left:auto}
+.dibujo > p{flex-basis:100%}
+.dibujo .it-prog{flex-basis:100%}
+.dibujo .tr-ley{flex-basis:auto}
+@media (max-width:760px){.dibujo > .row:last-child{margin-left:0}}
