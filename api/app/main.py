@@ -14,6 +14,7 @@ from . import arranque
 from . import fotos as F
 from . import importar as IMP
 from . import importar_base as IMPB
+from . import ruteo as RUT
 from .db import conexion, ejecutar, fila, filas, hoy, siguiente
 from .seguridad import COOKIE, COOKIE_SECURE, PH, SESION_HORAS, _sha, exigir, hash_clave, ip_de, login, logout, usuario_de
 
@@ -537,6 +538,279 @@ async def api_marca_borrar(n: str, req: Request):
     r = await run_in_threadpool(tx)
     cambio()
     return r
+
+
+# ───────── red de calles e itinerario diario ─────────
+def _ajuste(c, clave, defecto=None):
+    r = fila(c, "SELECT valor FROM ajuste WHERE clave=%s", (clave,))
+    if not r:
+        return defecto
+    return json.loads(r["valor"]) if isinstance(r["valor"], str) else r["valor"]
+
+
+def _xy(p, nombre="punto"):
+    try:
+        x, y = float(p["x"]), float(p["y"])
+    except (TypeError, ValueError, KeyError):
+        raise HTTPException(400, f"El {nombre} no tiene coordenadas válidas.")
+    if not (-500 <= x <= 4500 and -500 <= y <= 4000):
+        raise HTTPException(400, f"El {nombre} está fuera del plano.")
+    return x, y
+
+
+@app.get("/api/red")
+def api_red(req: Request):
+    exigir(req, "inspector")
+    with conexion() as c:
+        tramos = filas(c, """SELECT id_tramo id, nodo_a a, nodo_b b, tipo, sentido, geometria geo, largo_m largo, revisado,
+                             modificado FROM red_tramo ORDER BY id_tramo""")
+        for t in tramos:
+            t["geo"] = json.loads(t["geo"]) if isinstance(t["geo"], str) else t["geo"]
+            t["revisado"] = bool(t["revisado"])
+        return {"tramos": tramos, "inicio": _ajuste(c, "inicio_recorrido", {"x": 1620, "y": 45, "nombre": "Acceso principal"})}
+
+
+@app.put("/api/red/tramos/{tid}")
+async def api_red_tramo(tid: int, req: Request):
+    u = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            t = fila(c, "SELECT * FROM red_tramo WHERE id_tramo=%s FOR UPDATE", (tid,))
+            if not t:
+                raise HTTPException(404, "No existe ese tramo.")
+            tipo = d.get("tipo", t["tipo"])
+            sentido = d.get("sentido", t["sentido"])
+            if tipo not in ("calle", "peatonal", "borde", "cerrado") or sentido not in ("doble", "a_b", "b_a"):
+                raise HTTPException(400, "Tipo o sentido no válido.")
+            ejecutar(c, """UPDATE red_tramo SET tipo=%s, sentido=%s, revisado=%s, modificado=NOW(), id_usuario=%s
+                           WHERE id_tramo=%s""", (tipo, sentido, tipo != "borde", u["id_usuario"], tid))
+        RUT.invalidar()
+        return {"ok": True}
+    return await run_in_threadpool(tx)
+
+
+@app.put("/api/red/inicio")
+async def api_red_inicio(req: Request):
+    await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+    x, y = _xy(d, "punto de inicio")
+    v = {"x": round(x, 1), "y": round(y, 1), "nombre": _texto(d.get("nombre"), 60) or "Punto de inicio"}
+
+    def tx():
+        with conexion() as c:
+            ejecutar(c, "REPLACE INTO ajuste (clave, valor) VALUES ('inicio_recorrido', %s)", (json.dumps(v),))
+        return {"ok": True, "inicio": v}
+    return await run_in_threadpool(tx)
+
+
+def _pedido_ruta(c, d):
+    modo = d.get("modo") if d.get("modo") in ("vehiculo", "pie") else "vehiculo"
+    ini = d.get("inicio") or _ajuste(c, "inicio_recorrido", {"x": 1620, "y": 45, "nombre": "Acceso principal"})
+    x, y = _xy(ini, "punto de inicio")
+    inicio = {"x": x, "y": y, "nombre": _texto(ini.get("nombre"), 60) or "Inicio"}
+    paradas, vistas = [], set()
+    for p in (d.get("paradas") or [])[:60]:
+        tipo = p.get("tipo") if p.get("tipo") in ("uf", "marca") else None
+        ref = _texto(p.get("ref"), 20)
+        if not tipo or not ref or (tipo, ref) in vistas:
+            continue
+        vistas.add((tipo, ref))
+        px, py = _xy(p, f"punto de {ref}")
+        paradas.append({"tipo": tipo, "ref": ref, "x": px, "y": py, "fijada": bool(p.get("fijada"))})
+    if not paradas:
+        raise HTTPException(400, "Elegí al menos una parada.")
+    return modo, inicio, paradas, bool(d.get("volver"))
+
+
+def _calcular(c, modo, inicio, paradas, volver):
+    try:
+        return RUT.planificar(c, filas, modo, inicio, paradas, volver)
+    except RUT.SinRuta as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/itinerarios/calcular")
+async def api_itin_calcular(req: Request):
+    await run_in_threadpool(exigir, req, "inspector", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            return _calcular(c, *_pedido_ruta(c, d))
+    return await run_in_threadpool(tx)
+
+
+def _guardar_paradas(c, iid, ruta, previas=()):
+    ejecutar(c, "DELETE FROM itinerario_parada WHERE id_itinerario=%s", (iid,))
+    filas_ = list(previas) + [dict(p, estado="pendiente", marcada=None) for p in ruta["paradas"]]
+    km = {len(previas) + k: pi["km"] for k, pi in enumerate(ruta["piernas"])}
+    for k, p in enumerate(filas_):
+        ejecutar(c, """INSERT INTO itinerario_parada (id_itinerario, orden, tipo, ref, x, y, fijada, estado, marcada, km_desde_anterior)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                 (iid, k + 1, p["tipo"], p["ref"], p["x"], p["y"], bool(p.get("fijada")), p["estado"], p.get("marcada"),
+                  km.get(k, p.get("km_desde_anterior") or 0)))
+
+
+@app.post("/api/itinerarios")
+async def api_itin_guardar(req: Request):
+    u = await run_in_threadpool(exigir, req, "inspector", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            modo, inicio, paradas, volver = _pedido_ruta(c, d)
+            ruta = _calcular(c, modo, inicio, paradas, volver)
+            ejecutar(c, """UPDATE itinerario SET estado='reemplazado', cerrado=NOW()
+                           WHERE id_usuario=%s AND fecha=%s AND estado='activo'""", (u["id_usuario"], hoy()))
+            ejecutar(c, """INSERT INTO itinerario (fecha, id_usuario, modo, inicio, volver, km_plan, minutos_plan, geometria)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                     (hoy(), u["id_usuario"], modo, json.dumps(inicio), volver, ruta["km"], ruta["minutos"],
+                      json.dumps(ruta["piernas"])))
+            iid = fila(c, "SELECT LAST_INSERT_ID() id")["id"]
+            _guardar_paradas(c, iid, ruta)
+            return _itinerario(c, iid)
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
+
+
+def _itinerario(c, iid):
+    it = fila(c, """SELECT i.*, u.nombre usuario FROM itinerario i JOIN usuario u ON u.id_usuario=i.id_usuario
+                    WHERE i.id_itinerario=%s""", (iid,))
+    if not it:
+        raise HTTPException(404, "No existe ese recorrido.")
+    for k in ("inicio", "geometria"):
+        it[k] = json.loads(it[k]) if isinstance(it[k], str) else it[k]
+    ps = filas(c, "SELECT * FROM itinerario_parada WHERE id_itinerario=%s ORDER BY orden", (iid,))
+    for p in ps:                                   # una visita o un movimiento cargado después de planificar la marca como hecha
+        p["fijada"] = bool(p["fijada"])
+        if p["estado"] == "hecha":
+            continue
+        if p["tipo"] == "uf":
+            ufs = [int(x) for x in re.findall(r"\d+", p["ref"])]
+            r = fila(c, f"""SELECT MIN(creado) t FROM visita WHERE nro_uf IN ({','.join(['%s'] * len(ufs))})
+                            AND fecha=%s AND creado >= %s""", (*ufs, it["fecha"], it["creado"])) if ufs else None
+        else:
+            r = fila(c, "SELECT MIN(creado) t FROM historial WHERE nro_registro=%s AND creado >= %s", (p["ref"], it["creado"]))
+        if r and r["t"]:
+            p["estado"], p["marcada"], p["auto"] = "hecha", r["t"], True
+    it["paradas"] = ps
+    it["hechas"] = sum(1 for p in ps if p["estado"] == "hecha")
+    it["salteadas"] = sum(1 for p in ps if p["estado"] == "salteada")
+    it["volver"] = bool(it["volver"])
+    return it
+
+
+def _dueno(c, req, iid, u):
+    it = fila(c, "SELECT id_usuario, estado FROM itinerario WHERE id_itinerario=%s FOR UPDATE", (iid,))
+    if not it:
+        raise HTTPException(404, "No existe ese recorrido.")
+    if it["id_usuario"] != u["id_usuario"] and u["rol"] not in ("supervisor", "admin"):
+        raise HTTPException(403, "Ese recorrido es de otro usuario.")
+    return it
+
+
+@app.get("/api/itinerarios/actual")
+def api_itin_actual(req: Request):
+    u = exigir(req, "inspector")
+    with conexion() as c:
+        r = fila(c, """SELECT id_itinerario FROM itinerario WHERE id_usuario=%s AND fecha=%s AND estado='activo'
+                       ORDER BY id_itinerario DESC LIMIT 1""", (u["id_usuario"], hoy()))
+        return _itinerario(c, r["id_itinerario"]) if r else None
+
+
+@app.get("/api/itinerarios/{iid}")
+def api_itin_ver(iid: int, req: Request):
+    u = exigir(req, "inspector")
+    with conexion() as c:
+        _dueno(c, req, iid, u)
+        return _itinerario(c, iid)
+
+
+@app.post("/api/itinerarios/{iid}/paradas/{orden}")
+async def api_itin_parada(iid: int, orden: int, req: Request):
+    u = await run_in_threadpool(exigir, req, "inspector", True)
+    d = await req.json()
+    if d.get("estado") not in ("pendiente", "hecha", "salteada"):
+        raise HTTPException(400, "Estado no válido.")
+
+    def tx():
+        with conexion() as c:
+            _dueno(c, req, iid, u)
+            if not fila(c, "SELECT 1 x FROM itinerario_parada WHERE id_itinerario=%s AND orden=%s", (iid, orden)):
+                raise HTTPException(404, "No existe esa parada.")
+            ejecutar(c, "UPDATE itinerario_parada SET estado=%s, marcada=%s WHERE id_itinerario=%s AND orden=%s",
+                     (d["estado"], None if d["estado"] == "pendiente" else dt.datetime.now(), iid, orden))
+            return _itinerario(c, iid)
+    return await run_in_threadpool(tx)
+
+
+@app.post("/api/itinerarios/{iid}/recalcular")
+async def api_itin_recalcular(iid: int, req: Request):
+    """Reordena lo que falta desde la posición actual (o desde la última parada hecha)."""
+    u = await run_in_threadpool(exigir, req, "inspector", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            _dueno(c, req, iid, u)
+            it = _itinerario(c, iid)
+            hechas = [p for p in it["paradas"] if p["estado"] != "pendiente"]
+            pend = [p for p in it["paradas"] if p["estado"] == "pendiente"]
+            if not pend:
+                raise HTTPException(400, "No quedan paradas pendientes.")
+            if d.get("inicio"):
+                x, y = _xy(d["inicio"], "punto de partida")
+                inicio = {"x": x, "y": y, "nombre": "Mi ubicación"}
+            elif hechas:
+                ult = [p for p in hechas if p["estado"] == "hecha"][-1:] or hechas[-1:]
+                inicio = {"x": float(ult[0]["x"]), "y": float(ult[0]["y"]), "nombre": ult[0]["ref"]}
+            else:
+                inicio = it["inicio"]
+            ruta = _calcular(c, it["modo"], inicio, [{"tipo": p["tipo"], "ref": p["ref"], "x": float(p["x"]), "y": float(p["y"]),
+                                                       "fijada": p["fijada"]} for p in pend], it["volver"])
+            prev = [dict(p, x=float(p["x"]), y=float(p["y"]), estado=p["estado"] if not p.get("auto") else "hecha") for p in hechas]
+            _guardar_paradas(c, iid, ruta, prev)
+            ejecutar(c, "UPDATE itinerario SET geometria=%s WHERE id_itinerario=%s", (json.dumps(ruta["piernas"]), iid))
+            r = _itinerario(c, iid)
+            r["recalculado"] = {"km": ruta["km"], "minutos": ruta["minutos"], "avisos": ruta["avisos"]}
+            return r
+    r = await run_in_threadpool(tx)
+    return r
+
+
+@app.post("/api/itinerarios/{iid}/terminar")
+async def api_itin_terminar(iid: int, req: Request):
+    u = await run_in_threadpool(exigir, req, "inspector", True)
+
+    def tx():
+        with conexion() as c:
+            _dueno(c, req, iid, u)
+            ejecutar(c, "UPDATE itinerario SET estado='terminado', cerrado=NOW() WHERE id_itinerario=%s AND estado='activo'", (iid,))
+            return _itinerario(c, iid)
+    return await run_in_threadpool(tx)
+
+
+@app.get("/api/itinerarios")
+def api_itin_lista(req: Request):
+    u = exigir(req, "inspector")
+    q = req.query_params
+    desde = _fecha(q.get("desde"), "fecha desde", True) or (hoy() - dt.timedelta(days=30))
+    hasta = _fecha(q.get("hasta"), "fecha hasta", True) or hoy()
+    cond, args = ["i.fecha BETWEEN %s AND %s", "i.estado <> 'reemplazado'"], [desde, hasta]
+    if u["rol"] not in ("supervisor", "admin"):
+        cond.append("i.id_usuario=%s")
+        args.append(u["id_usuario"])
+    with conexion() as c:
+        ids = filas(c, f"SELECT i.id_itinerario FROM itinerario i WHERE {' AND '.join(cond)} ORDER BY i.fecha DESC, i.id_itinerario DESC LIMIT 200", args)
+        out = []
+        for r in ids:
+            it = _itinerario(c, r["id_itinerario"])
+            out.append({k: it[k] for k in ("id_itinerario", "fecha", "usuario", "modo", "km_plan", "minutos_plan", "estado", "hechas", "salteadas")}
+                       | {"paradas": len(it["paradas"])})
+        return out
 
 
 # ───────── importación de faltas desde la planilla de Reportes (solo admin) ─────────

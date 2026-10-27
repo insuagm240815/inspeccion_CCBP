@@ -60,7 +60,7 @@ function modal(titulo, cuerpo, pie) {
   iniciarFotos(m);
   return m;
 }
-document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('modal').hidden) cerrarModal(); else if (DIB) salirDibujo(); });
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (!$('modal').hidden) cerrarModal(); else if (DIB) salirDibujo(); else if (MAPA_MODO) salirModoMapa(); });
 const quien = id => `<span class="who">${esc((S.usuarios[id] || {}).nombre || '—')}</span>`;
 const fotoURL = n => '/api/fotos/' + encodeURIComponent(n);
 const ocultarRota = img => { img.addEventListener('error', () => { img.style.visibility = 'hidden'; }); };
@@ -96,7 +96,7 @@ PLAZAS.forEach(d => el('path', {d, class: 'plaza'}, gBg));
 el('path', {d: BG.club, class: 'club'}, gBg);
 el('path', {d: BG.water, class: 'water'}, gBg);
 SECT_LABELS.forEach(([t, x, y]) => { el('text', {x, y: y + 50, class: 'sec-label', 'text-anchor': 'middle'}, gBg).textContent = t; });
-const gLots = el('g', {}), gNum = el('g', {}), gMarcas = el('g', {}), gDib = el('g', {}), gGps = el('g', {});
+const gLots = el('g', {}), gNum = el('g', {}), gRed = el('g', {}), gRuta = el('g', {}), gMarcas = el('g', {}), gDib = el('g', {}), gGps = el('g', {});
 const paths = LOTS.map((l, i) => el('path', {d: l.d, class: 'lot', 'data-i': i}, gLots));
 LOTS.forEach(l => { el('text', {x: l.c[0], y: l.c[1], class: 'num'}, gNum).textContent = l.n.join('/'); });
 
@@ -181,7 +181,8 @@ function finPtr(e) {
   if (!ptrs.has(e.pointerId)) return;
   ptrs.delete(e.pointerId);
   if (ptrs.size === 0 && moved < 8) {
-    if (DIB) agregarPunto(e);
+    if (MAPA_MODO) MAPA_MODO(e, downT);
+    else if (DIB) agregarPunto(e);
     else if (downT && downT.dataset && downT.dataset.m) fichaMarca(downT.dataset.m);
     else if (downT && downT.dataset && downT.dataset.i != null) seleccionar(+downT.dataset.i);
   }
@@ -283,7 +284,7 @@ function render() {
     rq = 0;
     paths.forEach((p, i) => {
       const st = estadoLote(i);
-      p.setAttribute('class', 'lot' + (st ? ' st-' + st : '') + (pasaFiltro(i, st) ? '' : ' dim') + (i === SEL ? ' sel' : ''));
+      p.setAttribute('class', 'lot' + (st ? ' st-' + st : '') + (pasaFiltro(i, st) ? '' : ' dim') + (i === SEL ? ' sel' : '') + (ELEG && ELEG.has(i) ? ' it-sel' : ''));
     });
     const n = Object.values(S.hallazgos).filter(h => abierta(h) && h.revision && h.revision <= hoy()).length;
     $('nAgenda').hidden = !n; $('nAgenda').textContent = n;
@@ -992,6 +993,322 @@ function importarBase(res, archivo) {
   };
 }
 
+/* ───────── recorrido del día (itinerario) y red de calles ─────────
+   El inspector arma la lista de paradas, la API calcula el mejor orden sobre la red de calles del plano
+   (Dijkstra + Held-Karp / 2-opt) y el recorrido queda dibujado y se va tachando con las visitas. */
+let MAPA_MODO = null;          // función (evento, elemento tocado) mientras se elige en el plano o se edita la red
+let ELEG = null;               // Set de índices de lote elegidos desde el plano
+let ITIN = null, PREVIA = null, RED = null;
+const PLAN = {modo: 'vehiculo', inicio: 'fijo', volver: false, paradas: [], armado: false};
+const VEL = {vehiculo: 20, pie: 4.5};
+const kmTxt = km => km < 1 ? Math.round(km * 1000) + ' m' : (Math.round(km * 10) / 10).toString().replace('.', ',') + ' km';
+const minTxt = m => m < 60 ? Math.round(m) + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min';
+const refUF = i => LOTS[i].n.join('/');
+const paradaLote = (i, motivo) => ({tipo: 'uf', ref: refUF(i), x: LOTS[i].c[0], y: LOTS[i].c[1], motivo: motivo || 'Agregada', incluida: true, fijada: 0});
+const paradaMarca = (m, motivo) => { const [x, y] = centro(m.geo); return {tipo: 'marca', ref: m.n, x, y, motivo: motivo || m.tipo, incluida: true, fijada: 0}; };
+const claveP = p => p.tipo + ':' + p.ref;
+const nombreP = p => p.tipo === 'uf' ? 'U.F. ' + p.ref : p.ref + (S.marcas[p.ref] ? ' · ' + S.marcas[p.ref].lugar : '');
+
+function sugerencias() {
+  const t = hoy(), por = new Map();
+  Object.values(S.hallazgos).filter(h => abierta(h) && h.revision && h.revision <= t).sort((a, b) => a.revision.localeCompare(b.revision)).forEach(h => {
+    const i = ufLot[h.uf]; if (i == null) return;
+    const k = 'uf:' + refUF(i);
+    if (!por.has(k)) por.set(k, paradaLote(i, (h.revision < t ? 'Revisión vencida' : 'Revisión hoy') + ' · ' + h.n));
+  });
+  Object.values(S.marcas).filter(m => M_CERR.indexOf(m.estado) < 0 && m.revision && m.revision <= t).forEach(m => {
+    por.set('marca:' + m.n, paradaMarca(m, 'Novedad · ' + m.tipo));
+  });
+  return [...por.values()];
+}
+function planificar() {
+  if (!PLAN.armado) { PLAN.paradas = sugerencias(); PLAN.armado = true; }
+  const ps = PLAN.paradas, n = ps.filter(p => p.incluida).length, gps = posVigente();
+  const fila = (p, k) => `<label class="it-fila${p.incluida ? '' : ' off'}"><input type="checkbox" data-inc="${k}" ${p.incluida ? 'checked' : ''}>
+      <span class="it-txt"><b>${esc(nombreP(p))}</b><small>${esc(p.motivo)}</small></span>
+      <button type="button" class="it-pin${p.fijada ? ' on' : ''}" data-pin="${k}" title="${p.fijada ? 'Fijada: va primero' : 'Fijar para que vaya primero'}" aria-pressed="${!!p.fijada}">${p.fijada ? '📌 ' + p.fijada : '📌'}</button>
+      <button type="button" class="it-x" data-del="${k}" aria-label="Quitar">×</button></label>`;
+  modal('Planificar recorrido', `
+    <div class="grid2">
+      <div class="f"><span class="flabel">Traslado</span><span class="seg"><button type="button" data-modo="vehiculo" aria-pressed="${PLAN.modo === 'vehiculo'}">🚗 Vehículo</button><button type="button" data-modo="pie" aria-pressed="${PLAN.modo === 'pie'}">🚶 A pie</button></span></div>
+      <div class="f"><label for="itIni">Salida</label><select id="itIni"><option value="fijo">${esc((RED && RED.inicio.nombre) || 'Punto fijo')}</option><option value="gps" ${PLAN.inicio === 'gps' ? 'selected' : ''}>Mi ubicación (GPS)${gps ? '' : ' — se activa al calcular'}</option></select></div>
+    </div>
+    <label class="row chk"><input type="checkbox" id="itVolver" ${PLAN.volver ? 'checked' : ''}> Volver al punto de salida al terminar</label>
+    <div class="row it-add">
+      <input id="itUF" type="number" inputmode="numeric" min="1" max="2955" placeholder="U.F." aria-label="Agregar U.F.">
+      <button type="button" id="itAdd">Agregar</button>
+      <button type="button" id="itMapa">Elegir en el plano</button>
+    </div>
+    <p class="note">${n} parada${n === 1 ? '' : 's'} · 📌 fija una parada para que vaya primero (en el orden en que las fijás); el resto lo ordena la app por distancia.</p>
+    <div class="it-lista">${ps.length ? ps.map(fila).join('') : '<p class="empty">Sin paradas. Agregá U.F. o elegilas en el plano.</p>'}</div>
+  `, `<button type="button" id="itX">Cancelar</button><button type="button" class="pri" id="itCalc" ${n ? '' : 'disabled'}>Calcular recorrido</button>`);
+  document.querySelectorAll('[data-modo]').forEach(b => { b.onclick = () => { PLAN.modo = b.dataset.modo; planificar(); }; });
+  $('itIni').onchange = e => { PLAN.inicio = e.target.value; if (PLAN.inicio === 'gps') iniciarGps(false, true); };
+  $('itVolver').onchange = e => { PLAN.volver = e.target.checked; };
+  document.querySelectorAll('[data-inc]').forEach(b => { b.onchange = () => { ps[+b.dataset.inc].incluida = b.checked; planificar(); }; });
+  document.querySelectorAll('[data-del]').forEach(b => { b.onclick = e => { e.preventDefault(); ps.splice(+b.dataset.del, 1); renumerarPins(); planificar(); }; });
+  document.querySelectorAll('[data-pin]').forEach(b => { b.onclick = e => {
+    e.preventDefault(); const p = ps[+b.dataset.pin];
+    p.fijada = p.fijada ? 0 : Math.max(0, ...ps.map(x => x.fijada || 0)) + 1; if (p.fijada) p.incluida = true; renumerarPins(); planificar();
+  }; });
+  const agregarUF = () => {
+    const uf = parseInt($('itUF').value, 10), i = ufLot[uf];
+    if (i == null) { toast('No encontré la U.F. ' + ($('itUF').value || '') + ' en el plano.', true); return; }
+    const p = paradaLote(i); const ya = ps.find(x => claveP(x) === claveP(p));
+    if (ya) ya.incluida = true; else ps.push(p);
+    planificar(); setTimeout(() => $('itUF') && $('itUF').focus(), 30);
+  };
+  $('itAdd').onclick = agregarUF;
+  $('itUF').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); agregarUF(); } };
+  $('itMapa').onclick = elegirEnPlano;
+  $('itX').onclick = cerrarModal;
+  $('itCalc').onclick = calcularRecorrido;
+}
+function renumerarPins() {
+  PLAN.paradas.filter(p => p.fijada).sort((a, b) => a.fijada - b.fijada).forEach((p, k) => { p.fijada = k + 1; });
+}
+function pedidoRecorrido() {
+  const ps = PLAN.paradas.filter(p => p.incluida).sort((a, b) => (a.fijada || 999) - (b.fijada || 999));
+  const d = {modo: PLAN.modo, volver: PLAN.volver, paradas: ps.map(p => ({tipo: p.tipo, ref: p.ref, x: p.x, y: p.y, fijada: !!p.fijada}))};
+  if (PLAN.inicio === 'gps') {
+    const g = posVigente(); if (!g) throw new Error('Todavía no hay señal GPS. Esperá unos segundos o elegí el punto fijo.');
+    d.inicio = {x: g.x, y: g.y, nombre: 'Mi ubicación'};
+  }
+  return d;
+}
+async function calcularRecorrido() {
+  let d; try { d = pedidoRecorrido(); } catch (e) { toast(e.message, true); return; }
+  try {
+    busy('Calculando el mejor recorrido…');
+    PREVIA = Object.assign(await api('/itinerarios/calcular', {method: 'POST', json: d}), {pedido: d});
+    busy(''); cerrarModal(); pintarRuta(); verRuta(); barraRuta();
+  } catch (e) { busy(''); error(e); }
+}
+function verRuta() {
+  const r = PREVIA || ITIN; if (!r) return;
+  const xs = [], ys = [];
+  (PREVIA ? PREVIA.piernas : ITIN.geometria).forEach(p => p.geo.forEach(([x, y]) => { xs.push(x); ys.push(y); }));
+  if (!xs.length) return;
+  const w = Math.max(Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * FULL.w / FULL.h, 500) * 1.25;
+  seguir = false; marcarGps(); centrar((Math.max(...xs) + Math.min(...xs)) / 2, (Math.max(...ys) + Math.min(...ys)) / 2, Math.min(w, FULL.w));
+}
+function elegirEnPlano() {
+  cerrarModal();
+  ELEG = new Set(PLAN.paradas.filter(p => p.tipo === 'uf' && p.incluida).map(p => ufLot[+p.ref.split('/')[0]]).filter(i => i != null));
+  MAPA_MODO = (e, t) => {
+    const i = t && t.dataset && t.dataset.i != null ? +t.dataset.i : -1; if (i < 0) return;
+    ELEG.has(i) ? ELEG.delete(i) : ELEG.add(i); render(); barraEleccion();
+  };
+  barraEleccion(); render();
+}
+function barraEleccion() {
+  const b = $('itBar'); b.hidden = false;
+  b.innerHTML = `<div class="row"><b>Elegí las U.F. del recorrido</b><span class="note">${ELEG.size} elegida${ELEG.size === 1 ? '' : 's'}</span></div>
+    <p class="note">Tocá un lote para agregarlo o quitarlo. Podés mover y acercar el plano.</p>
+    <div class="row"><button type="button" id="itElX">Cancelar</button><button type="button" class="pri" id="itElOk">Listo</button></div>`;
+  $('itElX').onclick = () => { salirModoMapa(); planificar(); };
+  $('itElOk').onclick = () => {
+    const ps = PLAN.paradas;
+    ps.forEach(p => { if (p.tipo === 'uf') p.incluida = ELEG.has(ufLot[+p.ref.split('/')[0]]); });
+    ELEG.forEach(i => { if (!ps.some(p => p.tipo === 'uf' && p.ref === refUF(i))) ps.push(paradaLote(i)); });
+    PLAN.paradas = ps.filter(p => !(p.tipo === 'uf' && p.motivo === 'Agregada' && !p.incluida));
+    salirModoMapa(); planificar();
+  };
+}
+function salirModoMapa() { MAPA_MODO = null; ELEG = null; $('itBar').hidden = true; gRed.innerHTML = ''; svg.classList.remove('editando'); render(); if (PREVIA || ITIN) { pintarRuta(); barraRuta(); } }
+
+/* dibujo del recorrido */
+function pintarRuta() {
+  gRuta.innerHTML = '';
+  const r = PREVIA || ITIN; if (!r) return;
+  const piernas = PREVIA ? PREVIA.piernas : ITIN.geometria;
+  const paradas = PREVIA ? PREVIA.paradas : ITIN.paradas;
+  const pend = PREVIA ? null : ITIN.paradas.filter(p => p.estado === 'pendiente');
+  piernas.forEach(p => el('polyline', {points: p.geo.map(q => q.join(',')).join(' '), class: 'ruta'}, gRuta));
+  const ini = PREVIA ? PREVIA.inicio : ITIN.inicio;
+  el('rect', {x: ini.x - 13, y: ini.y - 13, width: 26, height: 26, rx: 5, class: 'ruta-ini'}, gRuta);
+  el('text', {x: ini.x, y: ini.y + 6, class: 'ruta-n'}, gRuta).textContent = 'S';
+  paradas.forEach((p, k) => {
+    const st = p.estado || 'pendiente', sig = pend && pend[0] === p;
+    el('circle', {cx: +p.x, cy: +p.y, r: sig ? 19 : 15, class: 'ruta-p ' + st + (sig ? ' sig' : '')}, gRuta);
+    el('text', {x: +p.x, y: +p.y + 5.5, class: 'ruta-n'}, gRuta).textContent = st === 'hecha' ? '✓' : String(k + 1);
+  });
+}
+function barraRuta() {
+  const b = $('itBar');
+  if (MAPA_MODO) return;
+  if (PREVIA) {
+    b.hidden = false;
+    b.innerHTML = `<div class="row"><b>Recorrido propuesto</b><span class="note">${PREVIA.paradas.length} paradas · ${kmTxt(PREVIA.km)} · ${minTxt(PREVIA.minutos)} ${PREVIA.modo === 'pie' ? 'a pie' : 'en vehículo'}</span></div>
+      ${PREVIA.avisos.length ? `<p class="gpsinfo lejos">${PREVIA.avisos.map(esc).join('<br>')}</p>` : ''}
+      <div class="row"><button type="button" id="itLista">Ver orden</button><button type="button" id="itCambiar">Cambiar paradas</button><button type="button" id="itDescartar">Descartar</button><button type="button" class="pri" id="itGuardar">Empezar recorrido</button></div>`;
+    $('itLista').onclick = () => listaRecorrido(PREVIA.paradas, PREVIA.piernas, false);
+    $('itCambiar').onclick = planificar;
+    $('itDescartar').onclick = () => { PREVIA = null; gRuta.innerHTML = ''; if (ITIN) { pintarRuta(); barraRuta(); } else b.hidden = true; };
+    $('itGuardar').onclick = async () => {
+      try { busy('Guardando…'); ITIN = await api('/itinerarios', {method: 'POST', json: PREVIA.pedido}); busy(''); PREVIA = null; PLAN.armado = false; toast('Recorrido guardado. ¡Buen recorrido!'); pintarRuta(); barraRuta(); }
+      catch (e) { busy(''); error(e); }
+    };
+    return;
+  }
+  if (!ITIN) { b.hidden = true; return; }
+  const ps = ITIN.paradas, sig = ps.find(p => p.estado === 'pendiente'), hechas = ps.filter(p => p.estado === 'hecha').length;
+  const g = posVigente(), dist = sig && g ? Math.round(Math.hypot(g.x - sig.x, g.y - sig.y) * M_POR_UNIDAD) : null;
+  b.hidden = false;
+  b.innerHTML = `<div class="row"><b>Recorrido de hoy</b><span class="note">${hechas} de ${ps.length} hechas${ITIN.salteadas ? ' · ' + ITIN.salteadas + ' salteada' + (ITIN.salteadas > 1 ? 's' : '') : ''}</span></div>
+    <div class="it-prog"><i style="width:${Math.round(100 * hechas / Math.max(ps.length, 1))}%"></i></div>
+    <p class="note">${sig ? `Próxima: <b>${esc(nombreP(sig))}</b>${dist != null ? ' · a unos ' + dist + ' m en línea recta' : ''}` : '¡Listo! No quedan paradas pendientes.'}</p>
+    <div class="row"><button type="button" id="itLista">Lista</button>${sig ? '<button type="button" id="itIr">Ir a la próxima</button>' : ''}<button type="button" id="itMin" title="Ocultar">▾</button></div>`;
+  $('itLista').onclick = () => listaRecorrido();
+  if ($('itIr')) $('itIr').onclick = () => irParada(sig);
+  $('itMin').onclick = () => { b.hidden = true; $('bItin').classList.add('on'); };
+}
+function irParada(p) {
+  seguir = false; marcarGps(); cerrarModal();
+  if (p.tipo === 'uf') { const i = ufLot[+String(p.ref).split('/')[0]]; if (i != null) { seleccionar(i); irA(i); return; } }
+  centrar(+p.x, +p.y, 450); if (p.tipo === 'marca' && S.marcas[p.ref]) fichaMarca(p.ref);
+}
+function listaRecorrido(ps, piernas, activo = true) {
+  ps = ps || ITIN.paradas; piernas = piernas || (ITIN && ITIN.geometria) || [];
+  const r = activo ? ITIN : PREVIA;
+  const icono = p => p.estado === 'hecha' ? '<span class="it-st ok">✓</span>' : p.estado === 'salteada' ? '<span class="it-st sk">⤼</span>' : '';
+  const kmDe = (p, k) => activo ? +p.km_desde_anterior : (piernas[k] ? piernas[k].km : 0);
+  modal(activo ? 'Recorrido de hoy' : 'Orden propuesto', `
+    <p class="note">${r.modo === 'pie' ? '🚶 A pie' : '🚗 En vehículo'} · salida: ${esc(r.inicio.nombre || 'Inicio')} · ${kmTxt(activo ? +ITIN.km_plan : PREVIA.km)} · ${minTxt(activo ? ITIN.minutos_plan : PREVIA.minutos)}${r.volver ? ' · vuelve al punto de salida' : ''}</p>
+    <ol class="it-orden">${ps.map((p, k) => `<li class="${p.estado || ''}"><span class="it-num">${k + 1}</span><span class="it-txt"><b>${esc(nombreP(p))}</b>
+      <small>${kmDe(p, k) ? kmTxt(kmDe(p, k)) + ' desde la anterior' : ''}${p.fijada ? ' · 📌 fijada' : ''}${p.estado === 'hecha' && p.marcada ? ' · hecha ' + String(p.marcada).slice(11, 16) : ''}</small></span>${icono(p)}
+      <span class="acc">${activo && p.estado === 'pendiente' ? `<button type="button" data-ir="${k}">Ir</button><button type="button" data-sk="${k}">Saltear</button>` : ''}${activo && p.estado === 'salteada' ? `<button type="button" data-re="${k}">Retomar</button>` : ''}${activo && p.estado === 'pendiente' ? `<button type="button" data-ok="${k}" title="Marcar como hecha sin cargar visita">✓</button>` : ''}</span></li>`).join('')}</ol>
+    ${activo ? '<p class="note">Al cargar una visita en una U.F. del recorrido (o un cambio en una novedad), la parada se tacha sola.</p>' : ''}
+  `, activo ? `<button type="button" class="danger" id="itFin">Terminar recorrido</button><button type="button" id="itNuevo">Planificar de nuevo</button><button type="button" class="pri" id="itRec">Recalcular lo que falta</button>`
+            : '<button type="button" id="itCerrar">Cerrar</button>');
+  if (!activo) { $('itCerrar').onclick = cerrarModal; return; }
+  const estado = async (k, est) => {
+    try { busy('Guardando…'); ITIN = await api(`/itinerarios/${ITIN.id_itinerario}/paradas/${ps[k].orden}`, {method: 'POST', json: {estado: est}}); busy(''); pintarRuta(); barraRuta(); listaRecorrido(); }
+    catch (e) { busy(''); error(e); }
+  };
+  document.querySelectorAll('[data-ir]').forEach(b => { b.onclick = () => irParada(ps[+b.dataset.ir]); });
+  document.querySelectorAll('[data-sk]').forEach(b => { b.onclick = () => estado(+b.dataset.sk, 'salteada'); });
+  document.querySelectorAll('[data-re]').forEach(b => { b.onclick = () => estado(+b.dataset.re, 'pendiente'); });
+  document.querySelectorAll('[data-ok]').forEach(b => { b.onclick = () => estado(+b.dataset.ok, 'hecha'); });
+  $('itRec').onclick = async () => {
+    const g = posVigente();
+    try {
+      busy('Recalculando…'); ITIN = await api(`/itinerarios/${ITIN.id_itinerario}/recalcular`, {method: 'POST', json: g ? {inicio: {x: g.x, y: g.y}} : {}}); busy('');
+      toast(`Recalculado ${g ? 'desde tu ubicación' : 'desde la última parada hecha'}: ${kmTxt(ITIN.recalculado.km)} para lo que falta`);
+      pintarRuta(); barraRuta(); listaRecorrido();
+    } catch (e) { busy(''); error(e); }
+  };
+  $('itNuevo').onclick = () => { PLAN.armado = false; planificar(); };
+  $('itFin').onclick = async () => {
+    try { busy('Cerrando…'); await api(`/itinerarios/${ITIN.id_itinerario}/terminar`, {method: 'POST', json: {}}); busy(''); ITIN = null; gRuta.innerHTML = ''; cerrarModal(); barraRuta(); toast('Recorrido terminado'); }
+    catch (e) { busy(''); error(e); }
+  };
+}
+async function cargarRecorrido() {
+  if (!puede('inspector')) return;
+  try {
+    if (!RED) RED = await api('/red');
+    ITIN = await api('/itinerarios/actual');
+  } catch (e) { return; }
+  if (!MAPA_MODO) { pintarRuta(); barraRuta(); }
+}
+$('bItin').onclick = () => {
+  $('bItin').classList.remove('on');
+  if (ITIN && $('itBar').hidden) { barraRuta(); return; }
+  if (ITIN) listaRecorrido(); else if (PREVIA) barraRuta(); else planificar();
+};
+
+/* editor de la red de calles (admin) */
+const TIPO_TR = {calle: 'Calle', peatonal: 'Paso peatonal', borde: 'Borde de golf/club (a confirmar)', cerrado: 'No transitable'};
+const SENT_TR = {doble: 'Doble mano', a_b: 'Mano única →', b_a: 'Mano única ←'};
+function segmentosRed(tipos) {
+  const out = [];
+  RED.tramos.forEach(t => { if (tipos.indexOf(t.tipo) >= 0) for (let i = 0; i < t.geo.length - 1; i++) out.push([t.geo[i][0], t.geo[i][1], t.geo[i + 1][0], t.geo[i + 1][1]]); });
+  return out;
+}
+function distSeg(px, py, s) {
+  const dx = s[2] - s[0], dy = s[3] - s[1], l2 = dx * dx + dy * dy || 1e-9;
+  const u = Math.max(0, Math.min(1, ((px - s[0]) * dx + (py - s[1]) * dy) / l2));
+  return Math.hypot(px - s[0] - u * dx, py - s[1] - u * dy);
+}
+function diagnosticoRed() {
+  const seg = segmentosRed(['calle', 'borde']);
+  const sinAcceso = [];
+  LOTS.forEach((l, i) => { let m = Infinity; for (const s of seg) { const d = distSeg(l.c[0], l.c[1], s); if (d < m) { m = d; if (m * M_POR_UNIDAD < 40) break; } } if (m * M_POR_UNIDAD >= 40) sinAcceso.push(i); });
+  const ady = {}; RED.tramos.filter(t => t.tipo === 'calle' || t.tipo === 'borde').forEach(t => { (ady[t.a] = ady[t.a] || []).push(t.b); (ady[t.b] = ady[t.b] || []).push(t.a); });
+  const vist = new Set(); let partes = 0;
+  Object.keys(ady).forEach(n => { if (vist.has(n)) return; partes++; const pila = [n]; vist.add(n); while (pila.length) { const u = pila.pop(); ady[u].forEach(v => { v = String(v); if (!vist.has(v)) { vist.add(v); pila.push(v); } }); } });
+  return {sinAcceso, partes};
+}
+function pintarRed() {
+  gRed.innerHTML = '';
+  const diag = RED.diag;
+  RED.tramos.forEach(t => {
+    const pts = t.geo.map(q => q.join(',')).join(' ');
+    el('polyline', {points: pts, class: 'tr tr-' + t.tipo + (t.revisado ? '' : ' sinrev')}, gRed);
+    if (t.sentido !== 'doble' && t.geo.length > 1) {
+      const k = Math.floor((t.geo.length - 1) / 2), [x1, y1] = t.geo[k], [x2, y2] = t.geo[k + 1];
+      let ang = Math.atan2(y2 - y1, x2 - x1); if (t.sentido === 'b_a') ang += Math.PI;
+      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, r = 16, f = a => [cx + r * Math.cos(ang + a), cy + r * Math.sin(ang + a)].join(',');
+      el('polygon', {points: [f(0), f(2.5), f(-2.5)].join(' '), class: 'tr-flecha'}, gRed);
+    }
+    el('polyline', {points: pts, class: 'tr-hit', 'data-tr': t.id}, gRed);
+  });
+  diag.sinAcceso.forEach(i => el('path', {d: LOTS[i].d, class: 'tr-sinacc'}, gRed));
+  const ini = RED.inicio;
+  el('rect', {x: ini.x - 14, y: ini.y - 14, width: 28, height: 28, rx: 5, class: 'ruta-ini'}, gRed);
+  el('text', {x: ini.x, y: ini.y + 6, class: 'ruta-n'}, gRed).textContent = 'S';
+}
+async function editarRed() {
+  try { busy('Cargando la red…'); RED = await api('/red'); busy(''); } catch (e) { busy(''); error(e); return; }
+  RED.diag = diagnosticoRed();
+  gRuta.innerHTML = ''; svg.classList.add('editando');
+  let ponerInicio = false;
+  MAPA_MODO = (e, t) => {
+    if (ponerInicio) {
+      const p = aSvg(e.clientX, e.clientY); ponerInicio = false;
+      api('/red/inicio', {method: 'PUT', json: {x: p.x, y: p.y, nombre: RED.inicio.nombre}}).then(r => { RED.inicio = r.inicio; pintarRed(); barraRed(); toast('Punto de salida actualizado'); }).catch(error);
+      return;
+    }
+    if (t && t.dataset && t.dataset.tr) formTramo(+t.dataset.tr);
+  };
+  const barraRed = () => {
+    const c = k => RED.tramos.filter(t => t.tipo === k), km = l => kmTxt(l.reduce((s, t) => s + +t.largo, 0) / 1000);
+    const sinrev = RED.tramos.filter(t => t.tipo === 'borde').length, d = RED.diag;
+    const b = $('itBar'); b.hidden = false;
+    b.innerHTML = `<div class="row"><b>Red de calles</b><span class="note">tocá un tramo para corregirlo</span></div>
+      <div class="tr-ley"><span><i class="tr-calle"></i>Calle ${km(c('calle'))}</span><span><i class="tr-peatonal"></i>Peatonal ${km(c('peatonal'))}</span><span><i class="tr-borde"></i>A confirmar ${sinrev}</span><span><i class="tr-cerrado"></i>No transitable ${c('cerrado').length}</span></div>
+      <p class="note">${d.partes <= 1 ? '✓ La red vehicular está toda conectada.' : `⚠ La red vehicular está partida en ${d.partes} partes.`} ${d.sinAcceso.length ? `⚠ ${d.sinAcceso.length} lote(s) sin calle a menos de 40 m (en rojo).` : '✓ Todos los lotes tienen calle cerca.'}</p>
+      <div class="row"><button type="button" id="rdIni">${ponerInicio ? 'Tocá el plano…' : 'Mover punto de salida (S)'}</button><button type="button" class="pri" id="rdX">Salir</button></div>`;
+    $('rdIni').onclick = () => { ponerInicio = true; barraRed(); toast('Tocá en el plano el nuevo punto de salida.'); };
+    $('rdX').onclick = () => { salirModoMapa(); cargarRecorrido(); };
+  };
+  RED.barra = barraRed;
+  pintarRed(); barraRed();
+}
+function formTramo(id) {
+  const t = RED.tramos.find(x => x.id === id); if (!t) return;
+  gRed.querySelectorAll('.tr-sel').forEach(x => x.remove());
+  el('polyline', {points: t.geo.map(q => q.join(',')).join(' '), class: 'tr-sel'}, gRed);
+  modal('Tramo ' + id, `
+    <p class="note">${kmTxt(t.largo / 1000)} · ${t.revisado ? 'revisado' : 'sin revisar (detectado del plano)'}${t.modificado ? ' · modificado ' + fmt(String(t.modificado).slice(0, 10)) : ''}</p>
+    <div class="f"><span class="flabel">Tipo</span><div class="tr-opc">${Object.entries(TIPO_TR).map(([k, l]) => `<label class="row chk"><input type="radio" name="trT" value="${k}" ${t.tipo === k ? 'checked' : ''}> <i class="tr-${k}"></i> ${l}</label>`).join('')}</div></div>
+    <div class="f"><label for="trS">Sentido de circulación (vehículos)</label><select id="trS">${Object.entries(SENT_TR).map(([k, l]) => `<option value="${k}" ${t.sentido === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <p class="note">La flecha del plano muestra el sentido "→". A pie se puede ir en los dos sentidos.</p></div>
+  `, '<button type="button" id="trX">Cancelar</button><button type="button" class="pri" id="trOk">Guardar</button>');
+  const quitarSel = () => gRed.querySelectorAll('.tr-sel').forEach(x => x.remove());
+  $('trX').onclick = () => { cerrarModal(); quitarSel(); };
+  $('trOk').onclick = async () => {
+    const tipo = (document.querySelector('[name=trT]:checked') || {}).value, sentido = $('trS').value;
+    try {
+      busy('Guardando…'); await api('/red/tramos/' + id, {method: 'PUT', json: {tipo, sentido}}); busy('');
+      Object.assign(t, {tipo, sentido, revisado: tipo !== 'borde', modificado: new Date().toISOString()});
+      RED.diag = diagnosticoRed(); cerrarModal(); pintarRed(); RED.barra(); toast('Tramo ' + id + ': ' + TIPO_TR[tipo]);
+    } catch (e) { busy(''); error(e); }
+  };
+}
+$('bRed').onclick = () => { if (MAPA_MODO) salirModoMapa(); editarRed(); };
+
 /* ───────── reportes (consulta, inspector y superiores) ───────── */
 const REP = {desde: '', hasta: '', sector: '', estado: '', rubro: ''};
 function qsRep() {
@@ -1234,6 +1551,7 @@ async function cargar() {
   if (!Object.values(S.cat).some(c => c.activo)) { b.hidden = false; b.textContent = 'No hay tipos de faltas cargados. Un administrador tiene que cargarlos en Tipos de faltas.'; }
   else b.hidden = true;
   render();
+  cargarRecorrido();
 }
 let es = null, tRec = 0;
 function vivo(on) { $('live').classList.toggle('on', on); $('liveT').textContent = on ? 'En línea' : 'Reconectando…'; }
@@ -1254,6 +1572,8 @@ async function iniciar() {
   $('bUsr').hidden = !puede('admin');
   $('bImp').hidden = !puede('admin');
   $('bLapiz').hidden = !puede('inspector');
+  $('bItin').hidden = !puede('inspector');
+  $('bRed').hidden = !puede('admin');
   applyVB();
   await cargar().catch(error);
   abrirEventos();

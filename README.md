@@ -208,6 +208,41 @@ Lo que se manda por WhatsApp sale del servidor del country: enviar solo a contac
 | Crear, editar, redibujar y cerrar (Reparado o No corresponde) | | ✔ | ✔ |
 | Borrar (con motivo) | | | ✔ |
 
+## Recorrido del día
+
+El botón **Recorrido** lo usan el inspector, el supervisor y el admin.
+
+1. **Armar las paradas.** La app propone las U.F. con revisión vencida o para hoy y las novedades de espacios comunes con revisión vencida. Se agregan más escribiendo la U.F. o con **Elegir en el plano**. Un lote unificado cuenta como una sola parada.
+2. **Elegir cómo se recorre:**
+   - **Vehículo** o **a pie**. A pie se suman los pasos peatonales y no importan las manos.
+   - Salida desde el **punto fijo** (el admin lo define) o desde **mi ubicación** (GPS).
+   - **Volver al punto de salida** al terminar, si hace falta.
+3. **Fijar paradas (opcional).** Con 📌 una parada va primero, en el orden en que se fijan. El resto lo ordena la app.
+4. **Calcular.** La app dibuja el recorrido numerado en el plano, con distancia y tiempo estimado (20 km/h en vehículo, 4,5 km/h a pie). Después se tocan **Empezar recorrido** y luego **Lista**.
+5. **Durante el recorrido:**
+   - Al cargar la visita de una U.F. del recorrido, o un cambio de estado en una novedad, la parada se tacha sola.
+   - Se puede **saltear**, **marcar como hecha** o **recalcular lo que falta** desde la ubicación actual.
+   - El recorrido queda guardado: planificado contra realizado. El supervisor y el admin lo pueden consultar.
+
+Cómo se calcula: cada parada se ancla al punto más cercano de la red de calles. Dijkstra (NetworkX) da la distancia real por calle entre paradas. El mejor orden se calcula exacto (Held-Karp) hasta 11 paradas libres; con más, se usa vecino más cercano + 2-opt.
+
+## Red de calles (solo admin)
+
+La red se extrajo del plano con `herramientas/red_calles`: es el eje del espacio libre entre lotes, clasificado por ancho. El botón **Red de calles** la muestra coloreada:
+
+| Color | Tipo | Uso |
+|---|---|---|
+| Azul | Calle | Vehículo y a pie |
+| Naranja | Paso peatonal (menos de 6,5 m) | Solo a pie |
+| Violeta punteado | Borde de golf o club (a confirmar) | Se usa, pero el recorrido avisa |
+| Gris punteado | No transitable | Nunca se usa |
+
+- **Corregir:** tocando un tramo se cambia el tipo y la mano. Una flecha marca las manos únicas.
+- **Avisos de la barra:** si la red vehicular quedó partida y qué lotes no tienen calle a menos de 40 m.
+- **Mover punto de salida:** cambia la S, el punto fijo desde donde arrancan los recorridos.
+
+Tarea pendiente: recorrer los tramos violetas y confirmar cuáles son calles y cuáles no.
+
 ## Importar la planilla de Construcciones (solo admin)
 
 El mismo botón **Importar** acepta la planilla completa de Construcciones, "Base de datos V1.0" en formato .xlsx. Se importan estas hojas:

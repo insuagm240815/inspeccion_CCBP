@@ -445,3 +445,54 @@ def test_importar_planilla_construcciones(usuarios):
     assert j["totales"]["nuevas"] == 0 and j["totales"]["actualizadas"] == 1
     h2 = next(x for x in adm.get("/api/estado").json()["hallazgos"] if x["n"] == f2)
     assert h2["estado"] == "Resuelto" and h2["cierre"] == "2026-10-09" and h2["revision"] is None
+
+
+def test_red_y_recorrido(usuarios):
+    ins, adm, con = cliente(usuarios["inspector"]), cliente(usuarios["admin"]), cliente(usuarios["consulta"])
+    red = ins.get("/api/red").json()
+    assert len(red["tramos"]) > 100 and red["inicio"]["x"]
+    assert con.get("/api/red").status_code == 403
+    # paradas: tres puntos sobre calles conocidas del plano (centros de tramos)
+    calles = [t for t in red["tramos"] if t["tipo"] == "calle" and len(t["geo"]) > 2]
+    pts = [calles[k * len(calles) // 4]["geo"][1] for k in range(4)]
+    par = [{"tipo": "uf", "ref": str(1000 + k), "x": x, "y": y} for k, (x, y) in enumerate(pts)]
+    r = ins.post("/api/itinerarios/calcular", json={"modo": "vehiculo", "paradas": par}, headers=H)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert len(j["paradas"]) == 4 and len(j["piernas"]) == 4 and j["km"] > 0
+    assert {p["ref"] for p in j["paradas"]} == {p["ref"] for p in par}
+    # el orden óptimo no es más largo que recorrerlas en el orden cargado
+    fijo = ins.post("/api/itinerarios/calcular", json={"modo": "vehiculo", "paradas": [dict(p, fijada=True) for p in par]}, headers=H).json()
+    assert [p["ref"] for p in fijo["paradas"]] == [p["ref"] for p in par] and j["km"] <= fijo["km"] + 1e-6
+    vuelta = ins.post("/api/itinerarios/calcular", json={"modo": "pie", "paradas": par, "volver": True}, headers=H).json()
+    assert len(vuelta["piernas"]) == 5
+    assert ins.post("/api/itinerarios/calcular", json={"modo": "vehiculo", "paradas": []}, headers=H).status_code == 400
+    assert con.post("/api/itinerarios/calcular", json={"modo": "vehiculo", "paradas": par}, headers=H).status_code == 403
+
+    # guardar, saltear, recalcular y terminar
+    it = ins.post("/api/itinerarios", json={"modo": "vehiculo", "paradas": par}, headers=H).json()
+    assert it["estado"] == "activo" and len(it["paradas"]) == 4 and ins.get("/api/itinerarios/actual").json()["id_itinerario"] == it["id_itinerario"]
+    iid = it["id_itinerario"]
+    it = ins.post(f"/api/itinerarios/{iid}/paradas/1", json={"estado": "hecha"}, headers=H).json()
+    assert it["hechas"] == 1
+    it = ins.post(f"/api/itinerarios/{iid}/recalcular", json={}, headers=H).json()
+    assert it["paradas"][0]["estado"] == "hecha" and [p["estado"] for p in it["paradas"][1:]] == ["pendiente"] * 3
+    otro = cliente(usuarios["supervisor"])
+    assert otro.get(f"/api/itinerarios/{iid}").status_code == 200          # el supervisor puede ver los recorridos
+    assert ins.post(f"/api/itinerarios/{iid}/terminar", json={}, headers=H).json()["estado"] == "terminado"
+    assert ins.get("/api/itinerarios/actual").json() is None
+
+    # editor de red: solo admin; un tramo cerrado deja de usarse
+    t = calles[len(calles) // 4]
+    assert ins.put(f"/api/red/tramos/{t['id']}", json={"tipo": "cerrado"}, headers=H).status_code == 403
+    try:
+        assert adm.put(f"/api/red/tramos/{t['id']}", json={"tipo": "cerrado"}, headers=H).status_code == 200
+        r = ins.post("/api/itinerarios/calcular", json={"modo": "vehiculo", "paradas": par}, headers=H)
+        assert r.status_code in (200, 400)
+        if r.status_code == 200:
+            assert r.json()["km"] >= j["km"] - 1e-6
+    finally:
+        adm.put(f"/api/red/tramos/{t['id']}", json={"tipo": t["tipo"], "sentido": t["sentido"]}, headers=H)
+        with conexion() as c:
+            ejecutar(c, "UPDATE red_tramo SET revisado=%s, modificado=NULL, id_usuario=NULL WHERE id_tramo=%s", (t["revisado"], t["id"]))
+    assert adm.put("/api/red/inicio", json={"x": 99999, "y": 0}, headers=H).status_code == 400

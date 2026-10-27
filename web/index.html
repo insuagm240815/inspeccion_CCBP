@@ -19,10 +19,12 @@
       <button type="submit">Ir</button>
     </form>
     <button type="button" id="bAgenda">Agenda<span class="badge" id="nAgenda" hidden>0</span></button>
+    <button type="button" id="bItin" hidden>Recorrido</button>
     <button type="button" id="bRep">Reportes</button>
     <button type="button" id="bCat">Tipos de faltas</button>
     <button type="button" id="bUsr" hidden>Usuarios</button>
     <button type="button" id="bImp" hidden>Importar</button>
+    <button type="button" id="bRed" hidden>Red de calles</button>
     <div class="user"><button type="button" id="uName" class="link" title="Cambiar mi clave"></button><button type="button" id="bSalir">Salir</button></div>
   </header>
   <nav class="chips" aria-label="Filtros">
@@ -43,6 +45,7 @@
     <div class="mapwrap">
       <svg id="map" viewBox="80 0 3860 3330" preserveAspectRatio="xMidYMid meet" aria-label="Plano de lotes del country"></svg>
       <div class="banner" id="banner" hidden></div>
+      <div class="dibujo itbar" id="itBar" hidden></div>
       <div class="dibujo" id="dibujo" hidden>
         <div class="row">
           <b>Novedad en espacio común</b>
