@@ -1200,7 +1200,7 @@ $('bItin').onclick = () => {
 };
 
 /* editor de la red de calles (admin) */
-const TIPO_TR = {calle: 'Calle', peatonal: 'Paso peatonal', borde: 'Borde de golf/club (a confirmar)', cerrado: 'No transitable'};
+const TIPO_TR = {calle: 'Calle (vehicular)', peatonal: 'Paso peatonal', cerrado: 'No transitable'};
 const SENT_TR = {doble: 'Doble mano', a_b: 'Mano única →', b_a: 'Mano única ←'};
 function segmentosRed(tipos) {
   const out = [];
@@ -1255,10 +1255,10 @@ async function editarRed() {
   };
   const barraRed = () => {
     const c = k => RED.tramos.filter(t => t.tipo === k), km = l => kmTxt(l.reduce((s, t) => s + +t.largo, 0) / 1000);
-    const sinrev = RED.tramos.filter(t => t.tipo === 'borde').length, d = RED.diag;
+    const d = RED.diag;
     const b = $('itBar'); b.hidden = false;
     b.innerHTML = `<div class="row"><b>Red de calles</b><span class="note">tocá un tramo para corregirlo</span></div>
-      <div class="tr-ley"><span><i class="tr-calle"></i>Calle ${km(c('calle'))}</span><span><i class="tr-peatonal"></i>Peatonal ${km(c('peatonal'))}</span><span><i class="tr-borde"></i>A confirmar ${sinrev}</span><span><i class="tr-cerrado"></i>No transitable ${c('cerrado').length}</span></div>
+      <div class="tr-ley"><span><i class="tr-calle"></i>Calle ${km(c('calle'))}</span><span><i class="tr-peatonal"></i>Peatonal ${km(c('peatonal'))}</span><span><i class="tr-cerrado"></i>No transitable ${c('cerrado').length}</span></div>
       <p class="note">${d.partes <= 1 ? '✓ La red vehicular está toda conectada.' : `⚠ La red vehicular está partida en ${d.partes} partes.`} ${d.sinAcceso.length ? `⚠ ${d.sinAcceso.length} lote(s) sin calle a menos de 40 m (en rojo).` : '✓ Todos los lotes tienen calle cerca.'}</p>
       <div class="row"><button type="button" id="rdIni">${ponerInicio ? 'Tocá el plano…' : 'Mover punto de salida (S)'}</button><button type="button" class="pri" id="rdX">Salir</button></div>`;
     $('rdIni').onclick = () => { ponerInicio = true; barraRed(); toast('Tocá en el plano el nuevo punto de salida.'); };

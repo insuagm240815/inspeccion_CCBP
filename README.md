@@ -239,14 +239,13 @@ La red se extrajo del plano con `herramientas/red_calles`: es el eje del espacio
 |---|---|---|
 | Azul | Calle | Vehículo y a pie |
 | Naranja | Paso peatonal (menos de 6,5 m) | Solo a pie |
-| Violeta punteado | Borde de golf o club (a confirmar) | Se usa, pero el recorrido avisa |
 | Gris punteado | No transitable | Nunca se usa |
 
 - **Corregir:** tocando un tramo se cambia el tipo y la mano. Una flecha marca las manos únicas.
 - **Avisos de la barra:** si la red vehicular quedó partida y qué lotes no tienen calle a menos de 40 m.
 - **Mover punto de salida:** cambia la S, el punto fijo desde donde arrancan los recorridos.
 
-Los tramos junto al golf y al club, que el plano no permitía clasificar, ya se confirmaron como calles vehiculares (migración `009`). El violeta queda solo para tramos que el admin marque a mano como "a confirmar".
+Los tramos junto al golf y al club, que el plano no permitía clasificar, ya se confirmaron como calles vehiculares (migración `009`).
 
 ## Importar la planilla de Construcciones (solo admin)
 
