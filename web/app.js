@@ -282,10 +282,14 @@ function render() {
   if (rq) return;
   rq = requestAnimationFrame(() => {
     rq = 0;
+    const cnt = {venc: 0, hoy: 0, abierta: 0, cerrada: 0, visit: 0};
     paths.forEach((p, i) => {
       const st = estadoLote(i);
+      if (st && (!FSEC || sectorDe(LOTS[i].n[0]) === FSEC)) cnt[st]++;
       p.setAttribute('class', 'lot' + (st ? ' st-' + st : '') + (pasaFiltro(i, st) ? '' : ' dim') + (i === SEL ? ' sel' : '') + (ELEG && ELEG.has(i) ? ' it-sel' : ''));
     });
+    Object.keys(cnt).forEach(k => { $('lg-' + k).textContent = cnt[k]; });   // lotes en cada estado (del sector filtrado)
+    $('lg-mk').textContent = Object.values(S.marcas).filter(m => M_CERR.indexOf(m.estado) < 0 && (!FSEC || m.sector === 'Sector ' + FSEC)).length;
     const n = Object.values(S.hallazgos).filter(h => abierta(h) && h.revision && h.revision <= hoy()).length;
     $('nAgenda').hidden = !n; $('nAgenda').textContent = n;
     if (SEL >= 0) pintarPanel();

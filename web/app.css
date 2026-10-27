@@ -326,3 +326,5 @@ table.cat tr.imp-omitida td{opacity:.6}
 .dibujo .it-prog{flex-basis:100%}
 .dibujo .tr-ley{flex-basis:auto}
 @media (max-width:760px){.dibujo > .row:last-child{margin-left:0}}
+.legend span{display:flex;align-items:center}
+.legend .lg-n{margin-left:auto;padding-left:14px;font-family:var(--f-mono);font-weight:600;font-variant-numeric:tabular-nums}
