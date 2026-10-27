@@ -224,6 +224,11 @@ El botón **Recorrido** lo usan el inspector, el supervisor y el admin.
    - Se puede **saltear**, **marcar como hecha** o **recalcular lo que falta** desde la ubicación actual.
    - El recorrido queda guardado: planificado contra realizado. El supervisor y el admin lo pueden consultar.
 
+**Google Maps:** el botón **Google Maps**, en la propuesta y durante el recorrido, abre las paradas en Google Maps en el orden calculado, en vehículo o a pie. Durante el recorrido manda solo las paradas pendientes, desde la ubicación del celular.
+- **Límite de paradas:** Google acepta hasta 3 paradas intermedias por enlace en el celular y 9 en la PC. Si hay más, la app ofrece el recorrido partido en tramos.
+- **Camino entre paradas:** lo arma Google y puede no conocer todas las calles internas ni las manos del country.
+- **Datos que salen:** solo coordenadas, sin números de U.F. ni nombres.
+
 Cómo se calcula: cada parada se ancla al punto más cercano de la red de calles. Dijkstra (NetworkX) da la distancia real por calle entre paradas. El mejor orden se calcula exacto (Held-Karp) hasta 11 paradas libres; con más, se usa vecino más cercano + 2-opt.
 
 ## Red de calles (solo admin)

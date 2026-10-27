@@ -311,3 +311,5 @@ table.cat tr.imp-omitida td{opacity:.6}
 .tr-opc{display:flex;flex-direction:column;gap:4px}
 .lot.it-sel{stroke:var(--ruta) !important;stroke-width:2.5;vector-effect:non-scaling-stroke}
 .ruta-p.elegida{fill:var(--ruta);stroke:#fff;stroke-width:3}
+.it-gm{display:flex;flex-direction:column;gap:8px}
+.it-gm a.btn{text-align:center}

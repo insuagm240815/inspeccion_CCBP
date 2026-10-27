@@ -1091,8 +1091,9 @@ function barraRuta() {
     b.hidden = false;
     b.innerHTML = `<div class="row"><b>Recorrido propuesto</b><span class="note">${PREVIA.paradas.length} paradas · ${kmTxt(PREVIA.km)} · ${minTxt(PREVIA.minutos)} ${PREVIA.modo === 'pie' ? 'a pie' : 'en vehículo'}</span></div>
       ${PREVIA.avisos.length ? `<p class="gpsinfo lejos">${PREVIA.avisos.map(esc).join('<br>')}</p>` : ''}
-      <div class="row"><button type="button" id="itLista">Ver orden</button><button type="button" id="itCambiar">Cambiar paradas</button><button type="button" id="itDescartar">Descartar</button><button type="button" class="pri" id="itGuardar">Empezar recorrido</button></div>`;
+      <div class="row"><button type="button" id="itLista">Ver orden</button><button type="button" id="itGmaps">Google Maps</button><button type="button" id="itCambiar">Cambiar paradas</button><button type="button" id="itDescartar">Descartar</button><button type="button" class="pri" id="itGuardar">Empezar recorrido</button></div>`;
     $('itLista').onclick = () => listaRecorrido(PREVIA.paradas, PREVIA.piernas, false);
+    $('itGmaps').onclick = () => abrirEnMaps(PREVIA.paradas, PREVIA.pedido.inicio ? null : PREVIA.inicio, PREVIA.modo, PREVIA.volver ? PREVIA.inicio : false, 1);
     $('itCambiar').onclick = () => planificar();
     $('itDescartar').onclick = () => { PREVIA = null; PLAN.lotes = new Set(); gRuta.innerHTML = ''; if (ITIN) { pintarRuta(); barraRuta(); } else b.hidden = true; };
     $('itGuardar').onclick = async () => {
@@ -1108,10 +1109,39 @@ function barraRuta() {
   b.innerHTML = `<div class="row"><b>Recorrido de hoy</b><span class="note">${hechas} de ${ps.length} hechas${ITIN.salteadas ? ' · ' + ITIN.salteadas + ' salteada' + (ITIN.salteadas > 1 ? 's' : '') : ''}</span></div>
     <div class="it-prog"><i style="width:${Math.round(100 * hechas / Math.max(ps.length, 1))}%"></i></div>
     <p class="note">${sig ? `Próxima: <b>${esc(nombreP(sig))}</b>${dist != null ? ' · a unos ' + dist + ' m en línea recta' : ''}` : '¡Listo! No quedan paradas pendientes.'}</p>
-    <div class="row"><button type="button" id="itLista">Lista</button>${sig ? '<button type="button" id="itIr">Ir a la próxima</button>' : ''}<button type="button" id="itMin" title="Ocultar">▾</button></div>`;
+    <div class="row"><button type="button" id="itLista">Lista</button>${sig ? '<button type="button" id="itIr">Ir a la próxima</button><button type="button" id="itGmaps">Google Maps</button>' : ''}<button type="button" id="itMin" title="Ocultar">▾</button></div>`;
   $('itLista').onclick = () => listaRecorrido();
   if ($('itIr')) $('itIr').onclick = () => irParada(sig);
+  if ($('itGmaps')) $('itGmaps').onclick = () => {
+    const pend = ps.filter(p => p.estado === 'pendiente');
+    abrirEnMaps(pend, null, ITIN.modo, ITIN.volver ? ITIN.inicio : false, ps.indexOf(pend[0]) + 1);
+  };
   $('itMin').onclick = () => { b.hidden = true; $('bItin').classList.add('on'); };
+}
+/* Abrir el recorrido en Google Maps, con las paradas en el orden calculado.
+   Google admite pocas paradas intermedias por enlace (3 en el celular, 9 en la PC): si hay más, se parte en tramos.
+   Sin origen, Google arranca desde la ubicación del celular. */
+function abrirEnMaps(paradas, origen, modo, volver, primerNro) {
+  if (!paradas.length) return;
+  const ll = g => g.lat.toFixed(6) + ',' + g.lon.toFixed(6);
+  const pts = paradas.map((p, k) => ({g: aGeo(+p.x, +p.y), nro: primerNro + k}));
+  if (volver) pts.push({g: aGeo(+volver.x, +volver.y), nro: 'S'});
+  const max = TACTIL ? 3 : 9, tramos = [];
+  let desde = origen ? aGeo(+origen.x, +origen.y) : null, i = 0;
+  while (i < pts.length) {
+    const tr = pts.slice(i, i + max + 1), dest = tr[tr.length - 1], way = tr.slice(0, -1);
+    const url = 'https://www.google.com/maps/dir/?api=1' + (desde ? '&origin=' + ll(desde) : '') + '&destination=' + ll(dest.g)
+      + (way.length ? '&waypoints=' + encodeURIComponent(way.map(w => ll(w.g)).join('|')) : '') + '&travelmode=' + (modo === 'pie' ? 'walking' : 'driving');
+    tramos.push({url, a: tr[0].nro, b: dest.nro, desdeMi: !desde});
+    desde = dest.g; i += tr.length;
+  }
+  if (tramos.length === 1) { window.open(tramos[0].url, '_blank', 'noopener'); return; }
+  modal('Abrir en Google Maps', `
+    <p class="ftxt">Google Maps admite hasta ${max} paradas intermedias por enlace, así que el recorrido se abre en ${tramos.length} partes. Abrí la siguiente cuando termines la anterior.</p>
+    <div class="it-gm">${tramos.map((t, k) => `<a class="btn" href="${t.url}" target="_blank" rel="noopener">Parte ${k + 1}: paradas ${t.a} a ${t.b}${t.desdeMi ? ' (desde tu ubicación)' : ''}</a>`).join('')}</div>
+    <p class="note">Google arma su propio camino entre paradas, respetando este orden. Puede que no conozca todas las calles internas o las manos del country; ante la duda, seguí el plano de la app. Solo se envían coordenadas, sin números de U.F. ni nombres.</p>
+  `, '<button type="button" id="gmX">Cerrar</button>');
+  $('gmX').onclick = cerrarModal;
 }
 function irParada(p) {
   seguir = false; marcarGps(); cerrarModal();
