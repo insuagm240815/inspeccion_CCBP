@@ -309,3 +309,5 @@ table.cat tr.imp-omitida td{opacity:.6}
 .tr-ley i.tr-calle,.tr-opc i.tr-calle{border-top-color:var(--tr-calle)} .tr-ley i.tr-peatonal,.tr-opc i.tr-peatonal{border-top-color:var(--tr-peat)}
 .tr-ley i.tr-borde,.tr-opc i.tr-borde{border-top-color:var(--tr-borde);border-top-style:dashed} .tr-ley i.tr-cerrado,.tr-opc i.tr-cerrado{border-top-color:var(--tr-cerr);border-top-style:dotted}
 .tr-opc{display:flex;flex-direction:column;gap:4px}
+.lot.it-sel{stroke:var(--ruta) !important;stroke-width:2.5;vector-effect:non-scaling-stroke}
+.ruta-p.elegida{fill:var(--ruta);stroke:#fff;stroke-width:3}

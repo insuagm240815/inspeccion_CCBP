@@ -212,12 +212,12 @@ Lo que se manda por WhatsApp sale del servidor del country: enviar solo a contac
 
 El botón **Recorrido** lo usan el inspector, el supervisor y el admin.
 
-1. **Armar las paradas.** La app propone las U.F. con revisión vencida o para hoy y las novedades de espacios comunes con revisión vencida. Se agregan más escribiendo la U.F. o con **Elegir en el plano**. Un lote unificado cuenta como una sola parada.
-2. **Elegir cómo se recorre:**
-   - **Vehículo** o **a pie**. A pie se suman los pasos peatonales y no importan las manos.
-   - Salida desde el **punto fijo** (el admin lo define) o desde **mi ubicación** (GPS).
-   - **Volver al punto de salida** al terminar, si hace falta.
-3. **Fijar paradas (opcional).** Con 📌 una parada va primero, en el orden en que se fijan. El resto lo ordena la app.
+1. **Elegir las U.F. en el plano.** Al tocar **Recorrido** se abre la barra "Armar recorrido". Cada lote que se toca se suma (se marca en rosa); si se vuelve a tocar, se quita. Un lote unificado cuenta como una sola parada.
+2. **Elegir cómo se recorre**, en la misma barra:
+   - **Vehículo** o **a pie**. A pie se suman los pasos peatonales.
+   - Salida desde el punto fijo o desde mi ubicación.
+   - **Volver al final**, si hace falta.
+3. **Orden:** lo decide la app por distancia.
 4. **Calcular.** La app dibuja el recorrido numerado en el plano, con distancia y tiempo estimado (20 km/h en vehículo, 4,5 km/h a pie). Después se tocan **Empezar recorrido** y luego **Lista**.
 5. **Durante el recorrido:**
    - Al cargar la visita de una U.F. del recorrido, o un cambio de estado en una novedad, la parada se tacha sola.
