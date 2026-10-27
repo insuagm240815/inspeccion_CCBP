@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from . import arranque
 from . import fotos as F
 from . import importar as IMP
+from . import importar_base as IMPB
 from .db import conexion, ejecutar, fila, filas, hoy, siguiente
 from .seguridad import COOKIE, COOKIE_SECURE, PH, SESION_HORAS, _sha, exigir, hash_clave, ip_de, login, logout, usuario_de
 
@@ -546,9 +547,38 @@ async def api_importar(req: Request):
     f = form.get("archivo")
     if not hasattr(f, "read"):
         raise HTTPException(400, "Elegí el archivo CSV.")
-    raw = await f.read(IMP.MAX_BYTES + 1)
+    raw = await f.read(IMPB.MAX_BYTES + 1)
     confirmar = form.get("confirmar") == "1"
     nombre = (getattr(f, "filename", "") or "planilla.csv").replace("\\", "/").split("/")[-1]
+
+    if raw[:2] == b"PK":                      # .xlsx: la planilla completa de Construcciones
+        class _Deshacer(Exception):
+            pass
+
+        def tx_base():
+            try:
+                hojas = IMPB.leer(raw)
+            except IMPB.ErrorArchivo as e:
+                raise HTTPException(400, str(e))
+            res = {}
+            try:
+                with conexion() as c:
+                    res = IMPB.procesar(c, hojas, nombre, u["id_usuario"])
+                    if not (confirmar and res["hay_cambios"]):
+                        raise _Deshacer()     # revisión previa: se deshace todo
+            except _Deshacer:
+                pass
+            res["confirmado"] = bool(confirmar and res["hay_cambios"])
+            if not res["confirmado"]:
+                res["importacion"] = None
+            return res
+
+        r = await run_in_threadpool(tx_base)
+        if r["confirmado"]:
+            cambio()
+        return r
+    if len(raw) > IMP.MAX_BYTES:
+        raise HTTPException(400, "El archivo supera los 2 MB.")
 
     def tx():
         try:

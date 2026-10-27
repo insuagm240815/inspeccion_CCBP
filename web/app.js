@@ -913,10 +913,15 @@ function borrarMarca(n) {
 /* ───────── importar faltas desde la planilla de Reportes (solo admin) ───────── */
 const RES_TXT = {nueva: 'Se importa', omitida: 'Se omite', error: 'Error'};
 function importar(res, archivo) {
+  if (res && res.tipo === 'base') return importarBase(res, archivo);
   const cuenta = k => res ? res.filas.filter(f => f.resultado === k).length : 0;
   const hecho = res && res.confirmado;
   const m = modal('Importar faltas', `
-    ${res ? '' : `<p class="ftxt">Subí la planilla CSV que descarga <b>Reportes → Descargar Excel</b> en el entorno donde cargó el inspector. Primero se revisa el archivo y no se guarda nada hasta que confirmes.</p>
+    ${res ? '' : `<p class="ftxt">Se pueden subir dos tipos de archivo. Primero se revisa y no se guarda nada hasta que confirmes.</p>
+    <ul class="note imp-reglas">
+      <li><b>Planilla completa de Construcciones (.xlsx)</b>, la "Base de datos": trae tipos de faltas, visitas, faltas con su historial y novedades de espacios comunes. Conserva los números originales cuando están libres. Si se vuelve a subir una versión más nueva, actualiza lo ya importado y agrega lo nuevo.</li>
+      <li><b>Planilla de Reportes (.csv)</b>, la que descarga <b>Reportes → Descargar Excel</b> en otro entorno de la app. Con este archivo rigen estas reglas:</li>
+    </ul>
     <ul class="note imp-reglas">
       <li>Cada falta recibe un número nuevo de esta base. En el historial queda el número original.</li>
       <li>Las faltas del mismo día, U.F. e inspector se agrupan en una visita.</li>
@@ -924,7 +929,7 @@ function importar(res, archivo) {
       <li>Los códigos tienen que existir en Tipos de faltas. Si el inspector no existe en esta base, la falta queda a tu nombre y se anota quién la cargó.</li>
       <li>No se importan fotos ni ubicación GPS: la planilla no las trae.</li>
     </ul>
-    <div class="f"><label for="iF">Archivo CSV</label><input id="iF" type="file" accept=".csv,text/csv"></div>`}
+    <div class="f"><label for="iF">Archivo (.xlsx o .csv)</label><input id="iF" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></div>`}
     ${res ? `<p class="ftxt"><b>${esc(res.archivo)}</b> · ${res.filas.length} filas</p>
       <div class="imp-tot"><span class="pill mk-ok">${hecho ? 'Importadas' : 'Para importar'}: ${cuenta('nueva')}</span><span class="pill n">Se omiten: ${cuenta('omitida')}</span>${cuenta('error') ? `<span class="pill venc">Con error: ${cuenta('error')}</span>` : ''}</div>
       <div class="scroll"><table class="cat"><thead><tr><th>Fila</th><th>N° origen</th><th>Fecha</th><th>U.F.</th><th>Código</th><th>Estado</th><th>Cargó</th><th>Resultado</th></tr></thead><tbody>
@@ -943,7 +948,7 @@ function importar(res, archivo) {
   if ($('iX')) $('iX').onclick = cerrarModal;
   if ($('iOtra')) $('iOtra').onclick = () => importar();
   if ($('iRev')) $('iRev').onclick = async () => {
-    const file = $('iF').files[0]; if (!file) { toast('Elegí el archivo CSV.', true); return; }
+    const file = $('iF').files[0]; if (!file) { toast('Elegí el archivo.', true); return; }
     try { busy('Revisando…'); const r = await enviar(file, false); busy(''); importar(r, file); } catch (e) { busy(''); error(e); }
   };
   if ($('iOk')) $('iOk').onclick = async () => {
@@ -956,6 +961,34 @@ function importar(res, archivo) {
       const h = await api('/importar/historial');
       $('iHist').innerHTML = h.length ? `<table class="cat"><thead><tr><th>Fecha</th><th>Archivo</th><th class="cnt">Filas</th><th class="cnt">Creadas</th><th class="cnt">Omitidas</th><th class="cnt">Errores</th><th>Quién</th></tr></thead><tbody>${h.map(x => `<tr><td>${fechaHora(x.creado)}</td><td>${esc(x.archivo)}</td><td class="cnt">${x.filas}</td><td class="cnt">${x.creadas}</td><td class="cnt">${x.omitidas}</td><td class="cnt">${x.errores}</td><td>${esc(x.usuario)}</td></tr>`).join('')}</tbody></table>` : 'Todavía no se importó nada.';
     } catch (e) { $('iHist').textContent = 'No se pudo cargar.'; }
+  };
+}
+
+function importarBase(res, archivo) {
+  const T = res.totales, hecho = res.confirmado, n = T.nuevas + T.actualizadas;
+  const tablaMsg = (l, tit) => l.length ? `<details ${tit === 'Errores' ? 'open' : ''}><summary class="sum">${tit} (${l.length}${l.length >= 300 ? '+' : ''})</summary><div class="scroll"><table class="cat"><thead><tr><th>Hoja</th><th class="cnt">Fila</th><th>N°</th><th>Detalle</th></tr></thead><tbody>
+    ${l.map(e => `<tr${tit === 'Errores' ? ' class="imp-error"' : ''}><td>${esc(e.hoja)}</td><td class="cnt">${e.fila || ''}</td><td class="mono">${esc(e.ref || '')}</td><td>${esc(e.motivo)}</td></tr>`).join('')}</tbody></table></div></details>` : '';
+  const m = modal('Importar planilla de Construcciones', `
+    <p class="ftxt"><b>${esc(res.archivo)}</b></p>
+    <div class="imp-tot"><span class="pill mk-ok">${hecho ? 'Importadas' : 'Nuevas'}: ${T.nuevas}</span><span class="pill mk-rep">${hecho ? 'Actualizadas' : 'Se actualizan'}: ${T.actualizadas}</span><span class="pill n">Sin cambios: ${T.sin_cambios}</span>${T.errores ? `<span class="pill venc">Con error: ${T.errores}</span>` : ''}</div>
+    <div class="scroll"><table class="cat"><thead><tr><th>Hoja</th><th class="cnt">Filas</th><th class="cnt">Nuevas</th><th class="cnt">Actualizadas</th><th class="cnt">Sin cambios</th><th class="cnt">Errores</th></tr></thead><tbody>
+      ${res.hojas.map(h => `<tr><td>${esc(h.hoja)}</td><td class="cnt">${h.total}</td><td class="cnt">${h.nuevas}</td><td class="cnt">${h.actualizadas}</td><td class="cnt">${h.sin_cambios}</td><td class="cnt">${h.errores}</td></tr>`).join('')}
+    </tbody></table></div>
+    ${tablaMsg(res.errores, 'Errores')}
+    ${tablaMsg(res.avisos || [], 'Avisos (fechas estimadas)')}
+    ${res.no_importa.length ? `<details><summary class="sum">No se importa (${res.no_importa.reduce((s, x) => s + x.filas, 0)} filas)</summary><ul class="note imp-reglas">${res.no_importa.map(x => `<li><b>${esc(x.hoja)}</b> (${x.filas}): ${esc(x.motivo)}</li>`).join('')}</ul></details>` : ''}
+    ${hecho ? '' : '<p class="note">Las filas con error no se importan; el resto sí. Si corregís la planilla y la volvés a subir, entran las que faltaban.</p>'}
+  `, hecho ? '<button type="button" class="pri" id="iOtra">Importar otro archivo</button>'
+           : `<button type="button" id="iOtra">Elegir otro archivo</button><button type="button" class="pri" id="iOk" ${n ? '' : 'disabled'}>${n ? `Importar (${T.nuevas} nuevas, ${T.actualizadas} actualizadas)` : 'No hay nada para importar'}</button>`);
+  m.querySelector('.dlg').classList.add('ancho');
+  $('iOtra').onclick = () => importar();
+  if ($('iOk')) $('iOk').onclick = async () => {
+    try {
+      busy('Importando…');
+      const fd = new FormData(); fd.append('archivo', archivo, archivo.name); fd.append('confirmar', '1');
+      const r = await api('/importar/faltas', {method: 'POST', form: fd});
+      busy(''); toast(`Importación lista: ${r.totales.nuevas} nuevas, ${r.totales.actualizadas} actualizadas`); await cargar(); importarBase(r, archivo);
+    } catch (e) { busy(''); error(e); }
   };
 }
 

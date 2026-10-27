@@ -208,6 +208,29 @@ Lo que se manda por WhatsApp sale del servidor del country: enviar solo a contac
 | Crear, editar, redibujar y cerrar (Reparado o No corresponde) | | ✔ | ✔ |
 | Borrar (con motivo) | | | ✔ |
 
+## Importar la planilla de Construcciones (solo admin)
+
+El mismo botón **Importar** acepta la planilla completa de Construcciones, "Base de datos V1.0" en formato .xlsx. Se importan estas hojas:
+
+| Hoja | Qué se hace |
+|---|---|
+| Catálogo | Agrega los códigos que no existen. Crea los rubros que falten. |
+| Visitas | Mapea origen y contacto. Si un valor trae dos opciones ("A / B"), toma la primera válida. |
+| Hallazgos | Importa con estado, revisión, cierre, foto tomada, derivado a Comisión y reiterancia. |
+| Marcas | Usa la geometría del plano. Calcula latitud y longitud con la calibración del plano. |
+| Historial | Importa los movimientos de faltas y marcas. |
+
+Cómo se procesan los datos:
+
+- **Numeración:** se conservan los números originales (V-, F-, M-) cuando están libres. Si están ocupados, se asigna uno nuevo y el historial anota "(era …)".
+- **Fechas faltantes:** algunas filas migradas del Registro V14 no tienen fecha. Se estima con el primer movimiento de su historial, y si no hay ninguno, con la visita anterior. Queda anotado en la visita y se muestra en **Avisos**.
+- **Versión nueva de la planilla:** lo ya importado se actualiza con los valores de la planilla (estado, revisión, cierre, observación) y solo entran las filas nuevas. Nunca duplica.
+- **Revisión previa:** se hace una pasada completa y se deshace al final. Al confirmar, todo corre en una sola transacción.
+
+No se importan Observaciones, Urgencias, Relevamientos, Regularización ni Permisos, porque la app todavía no tiene esos módulos. Tampoco las Fotos, porque son links de Google Drive, ni las Faltas borradas.
+
+**Protección de datos:** la planilla tiene datos reales de las U.F. Cargala solo en el servidor del country (Proxmox). En Codespaces o Railway los datos quedan en servidores de terceros. Para probar ahí, usá una copia sin observaciones o con datos de ejemplo.
+
 ## Importar faltas (solo admin)
 
 El botón **Importar** pasa a esta base las faltas que un inspector cargó en otro entorno. Sirve para armar el set de datos de una prueba funcional o para llevar a producción lo relevado en la prueba.

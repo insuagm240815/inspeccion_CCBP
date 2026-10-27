@@ -371,3 +371,77 @@ def test_importar_faltas(usuarios):
     # archivo que no es la planilla
     r = adm.post("/api/importar/faltas", files={"archivo": ("x.csv", b"a;b\n1;2\n", "text/csv")}, data={"confirmar": "0"}, headers=H)
     assert r.status_code == 400 and "columnas" in r.json()["detail"]
+
+
+def _xlsx(estado_f2="Pendiente"):
+    import datetime as dt
+    from openpyxl import Workbook
+    wb = Workbook()
+    wb.active.title = "Leeme"
+    hojas = {
+        "Catálogo": [["Código", "Rubro", "Falta", "Qué observar", "Norma", "Artículo", "Penalidad", "Detectable en recorrido", "Visible en recorrido", "Módulo", "Activo"],
+                     [f"T{SUF[:4]}".upper(), f"Rubro {SUF}", "Falta de la planilla", "", "", "", "", "Si", "Sí", "Infracción", "Sí"]],
+        "Visitas": [["N° visita", "Fecha", "U.F.", "Sector", "Origen", "Contacto", "Observación", "Origen del dato", "Sin novedad"],
+                    ["V-9001", dt.datetime(2026, 10, 1, 4), 1200, "Sector III", "Recorrido de inspección / Reclamo de vecino", "No había nadie", "obs", "x", None],
+                    ["V-9002", None, 1201, "Sector III", "Revisión de caso", None, None, "x", None]],
+        "Hallazgos": [["N° hallazgo", "N° visita", "Fecha", "U.F.", "Pilar", "Sector", "Rubro", "Código", "Tipo de falta", "Estado", "Fecha de revisión",
+                       "Foto tomada", "Derivado a Comisión", "Observación", "Reiterancia", "Fecha de cierre", "Origen del dato"],
+                      ["F-9001", "V-9001", dt.datetime(2026, 10, 1, 4), 1200, 1200, "", "", f"T{SUF[:4]}".upper(), "", "Notificado/Intimado", None, "Sí", "Sí", "o1", 1, None, ""],
+                      ["F-9002", "V-9002", None, 1201, 1201, "", "", "EJ-01", "", estado_f2, dt.datetime(2026, 10, 9, 12), "No", None, None, 0, None, ""],
+                      ["F-9003", "V-9999", dt.datetime(2026, 10, 1), 1200, 1200, "", "", "EJ-01", "", "Pendiente", None, None, None, None, 0, None, ""]],
+        "Historial": [["Fecha", "N° hallazgo", "U.F.", "Cambio", "N° visita", "Nota"],
+                      [dt.datetime(2026, 10, 1, 4), "F-9001", 1200, "Alta. Estado: Pendiente", "V-9001", None],
+                      [dt.datetime(2026, 10, 5, 12), "F-9002", 1201, "Alta. Estado: Pendiente", None, None],
+                      [dt.datetime(2026, 10, 6, 12), "O-0001", 1201, "Observado", None, None]],
+        "Marcas": [["N° marca", "Fecha", "Grupo", "Capa", "Tipo", "Falta", "Forma", "Lugar", "Sector", "Estado", "Fecha de revisión", "Observación",
+                    "Fecha de cierre", "Geometría", "Origen del dato"],
+                   ["M-9001", dt.datetime(2026, 10, 9, 12), "Áreas comunes", "Calles", "Bache", "Bache", "Punto", "Calle; Zanja / cuneta", "Sector III",
+                    "Relevado", dt.datetime(2026, 10, 30, 12), "Bache frente a la 1200", None, "[[2553,2592]]", "Herramienta"]],
+        "Observaciones": [["N° observación"], ["O-0001"]],
+    }
+    for nombre, filas_ in hojas.items():
+        ws = wb.create_sheet(nombre)
+        for r in filas_:
+            ws.append(r)
+    b = io.BytesIO()
+    wb.save(b)
+    return b.getvalue()
+
+
+def test_importar_planilla_construcciones(usuarios):
+    adm = cliente(usuarios["admin"])
+    sube = lambda raw, conf: adm.post("/api/importar/faltas", files={"archivo": ("Base de datos.xlsx", raw, "application/octet-stream")},
+                                      data={"confirmar": "1" if conf else "0"}, headers=H)
+    with conexion() as c:
+        ya = fila(c, "SELECT COUNT(*) n FROM importacion_item WHERE nro_origen='F-9001'")["n"]
+    r = sube(_xlsx(), False)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    if ya:                                   # base de desarrollo reutilizada: ya se importó en una corrida anterior
+        return
+    hojas = {h["hoja"]: h for h in j["hojas"]}
+    assert not j["confirmado"] and hojas["Visitas"]["nuevas"] == 2 and hojas["Hallazgos"]["nuevas"] == 2 and hojas["Hallazgos"]["errores"] == 1
+    assert hojas["Marcas"]["nuevas"] == 1 and hojas["Historial"]["nuevas"] == 2 and any(x["hoja"] == "Observaciones" for x in j["no_importa"])
+    with conexion() as c:
+        assert fila(c, "SELECT COUNT(*) n FROM importacion_item WHERE nro_origen='F-9001'")["n"] == 0    # la revisión no guarda
+
+    j = sube(_xlsx(), True).json()
+    assert j["confirmado"] and j["totales"]["nuevas"] == 8
+    est = adm.get("/api/estado").json()
+    with conexion() as c:
+        f1 = fila(c, "SELECT nro_registro FROM importacion_item WHERE nro_origen='F-9001' AND nro_registro LIKE 'F-%%'")["nro_registro"]
+        f2 = fila(c, "SELECT nro_registro FROM importacion_item WHERE nro_origen='F-9002' AND nro_registro LIKE 'F-%%'")["nro_registro"]
+        m1 = fila(c, "SELECT nro_registro FROM importacion_item WHERE nro_origen='M-9001'")["nro_registro"]
+    h = {x["n"]: x for x in est["hallazgos"]}
+    assert h[f1]["estado"] == "Notificado/Intimado" and h[f1]["reit"] == 1 and h[f1]["fotoTomada"]
+    assert h[f2]["fecha"] == "2026-10-05"              # sin fecha en la planilla: estimada por su historial
+    v1 = next(v for v in est["visitas"] if v["n"] == h[f1]["visita"])
+    assert v1["origen"] == "Recorrido de inspección" and v1["contacto"] == "No había nadie"
+    m = next(x for x in est["marcas"] if x["n"] == m1)
+    assert m["lugar"] == "Calle" and m["geo"] == [[2553, 2592]] and m["lat"] is not None
+
+    # versión más nueva de la planilla: se actualiza el estado, sin duplicar nada
+    j = sube(_xlsx("Resuelto"), True).json()
+    assert j["totales"]["nuevas"] == 0 and j["totales"]["actualizadas"] == 1
+    h2 = next(x for x in adm.get("/api/estado").json()["hallazgos"] if x["n"] == f2)
+    assert h2["estado"] == "Resuelto" and h2["cierre"] == "2026-10-09" and h2["revision"] is None
