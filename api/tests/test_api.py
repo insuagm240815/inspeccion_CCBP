@@ -332,3 +332,42 @@ def test_novedades_espacios_comunes(usuarios):
     with conexion() as c:
         assert fila(c, "SELECT COUNT(*) n FROM marca WHERE nro_marca=%s", (n,))["n"] == 0
         assert fila(c, "SELECT COUNT(*) n FROM foto WHERE nro_registro=%s", (n,))["n"] == 0
+
+
+def test_importar_faltas(usuarios):
+    adm, ins = cliente(usuarios["admin"]), cliente(usuarios["inspector"])
+    n1, n2 = f"F-9{SUF[:3]}", f"F-8{SUF[:3]}"
+    csv_txt = ("﻿N° falta;Fecha;U.F.;Sector;Rubro;Código;Falta;Estado;Revisión;Cierre;Reiterancia;Cargó;Observación\n"
+               f"{n1};2026-10-20;1200;Sector III;x;EJ-01;x;Pendiente;2026-11-02;;0;Prueba inspector;obs uno\n"
+               f"{n2};20/10/2026;1200;Sector III;x;EJ-03;x;Resuelto;;;1;Alguien de afuera;\n"
+               "F-0099;2026-10-20;99999;x;x;EJ-01;x;Pendiente;;;0;x;\n"
+               "F-0098;2026-10-20;1200;x;x;ZZ-99;x;Pendiente;;;0;x;\n")
+    arch = lambda: {"archivo": ("faltas.csv", csv_txt.encode("utf-8"), "text/csv")}
+    assert ins.post("/api/importar/faltas", files=arch(), data={"confirmar": "1"}, headers=H).status_code == 403
+
+    r = adm.post("/api/importar/faltas", files=arch(), data={"confirmar": "0"}, headers=H)
+    assert r.status_code == 200, r.text
+    res = [f["resultado"] for f in r.json()["filas"]]
+    assert res == ["nueva", "nueva", "error", "error"] and not r.json()["confirmado"]
+    with conexion() as c:
+        assert fila(c, "SELECT COUNT(*) n FROM importacion_item WHERE nro_origen IN (%s,%s)", (n1, n2))["n"] == 0
+
+    r = adm.post("/api/importar/faltas", files=arch(), data={"confirmar": "1"}, headers=H)
+    assert r.status_code == 200, r.text
+    nuevos = [f["nuevo"] for f in r.json()["filas"] if f.get("nuevo")]
+    assert len(nuevos) == 2
+    est = adm.get("/api/estado").json()
+    h = {x["n"]: x for x in est["hallazgos"]}
+    assert h[nuevos[0]]["estado"] == "Pendiente" and h[nuevos[0]]["uf"] == 1200 and h[nuevos[0]]["autor"] is not None
+    assert h[nuevos[1]]["estado"] == "Resuelto" and h[nuevos[1]]["cierre"] and h[nuevos[1]]["reit"] == 1
+    hist = [x for x in est["historial"] if x["reg"] == nuevos[1]]
+    assert f"era {n2}" in hist[0]["cambio"] and "Alguien de afuera" in hist[0]["nota"]
+
+    # el mismo archivo otra vez: no duplica
+    r = adm.post("/api/importar/faltas", files=arch(), data={"confirmar": "1"}, headers=H)
+    assert [f["resultado"] for f in r.json()["filas"]][:2] == ["omitida", "omitida"] and not r.json()["confirmado"]
+    assert adm.get("/api/importar/historial").json()[0]["creadas"] == 2
+
+    # archivo que no es la planilla
+    r = adm.post("/api/importar/faltas", files={"archivo": ("x.csv", b"a;b\n1;2\n", "text/csv")}, data={"confirmar": "0"}, headers=H)
+    assert r.status_code == 400 and "columnas" in r.json()["detail"]

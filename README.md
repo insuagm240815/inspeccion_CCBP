@@ -208,6 +208,24 @@ Lo que se manda por WhatsApp sale del servidor del country: enviar solo a contac
 | Crear, editar, redibujar y cerrar (Reparado o No corresponde) | | ✔ | ✔ |
 | Borrar (con motivo) | | | ✔ |
 
+## Importar faltas (solo admin)
+
+El botón **Importar** pasa a esta base las faltas que un inspector cargó en otro entorno. Sirve para armar el set de datos de una prueba funcional o para llevar a producción lo relevado en la prueba.
+
+1. En el entorno de origen: **Reportes**, elegir el período y **Descargar Excel (CSV)**.
+2. En el destino, como admin: **Importar → elegir el archivo → Revisar archivo**. Se muestra fila por fila qué se importa, qué se omite y qué tiene errores. Hasta acá no se guarda nada.
+3. **Importar N faltas** confirma.
+
+Cómo se importan las faltas:
+
+- Cada falta recibe un número nuevo y el historial guarda el original ("era F-0004").
+- Las faltas del mismo día, U.F. e inspector se agrupan en una visita.
+- El inspector se busca por nombre. Si no existe en la base de destino, la falta queda a nombre del admin y se anota quién la cargó.
+- Lo ya importado se omite, así que subir dos veces el mismo archivo no duplica nada.
+- Los códigos tienen que existir en Tipos de faltas y las U.F. en el padrón.
+- Se aceptan fechas `2026-10-26` o `26/10/2026` y separadores `;` o `,`. También sirve si el archivo se abrió y se guardó con Excel.
+- No se importan fotos ni GPS, porque la planilla no los trae.
+
 ## Entorno de prueba en Railway
 
 Para dejar la app en línea de forma permanente durante la prueba, **solo con datos ficticios** (Railway guarda los datos fuera del país).

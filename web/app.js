@@ -910,6 +910,55 @@ function borrarMarca(n) {
   };
 }
 
+/* ───────── importar faltas desde la planilla de Reportes (solo admin) ───────── */
+const RES_TXT = {nueva: 'Se importa', omitida: 'Se omite', error: 'Error'};
+function importar(res, archivo) {
+  const cuenta = k => res ? res.filas.filter(f => f.resultado === k).length : 0;
+  const hecho = res && res.confirmado;
+  const m = modal('Importar faltas', `
+    ${res ? '' : `<p class="ftxt">Subí la planilla CSV que descarga <b>Reportes → Descargar Excel</b> en el entorno donde cargó el inspector. Primero se revisa el archivo y no se guarda nada hasta que confirmes.</p>
+    <ul class="note imp-reglas">
+      <li>Cada falta recibe un número nuevo de esta base. En el historial queda el número original.</li>
+      <li>Las faltas del mismo día, U.F. e inspector se agrupan en una visita.</li>
+      <li>Lo que ya se importó antes se omite, así que podés volver a subir el mismo archivo.</li>
+      <li>Los códigos tienen que existir en Tipos de faltas. Si el inspector no existe en esta base, la falta queda a tu nombre y se anota quién la cargó.</li>
+      <li>No se importan fotos ni ubicación GPS: la planilla no las trae.</li>
+    </ul>
+    <div class="f"><label for="iF">Archivo CSV</label><input id="iF" type="file" accept=".csv,text/csv"></div>`}
+    ${res ? `<p class="ftxt"><b>${esc(res.archivo)}</b> · ${res.filas.length} filas</p>
+      <div class="imp-tot"><span class="pill mk-ok">${hecho ? 'Importadas' : 'Para importar'}: ${cuenta('nueva')}</span><span class="pill n">Se omiten: ${cuenta('omitida')}</span>${cuenta('error') ? `<span class="pill venc">Con error: ${cuenta('error')}</span>` : ''}</div>
+      <div class="scroll"><table class="cat"><thead><tr><th>Fila</th><th>N° origen</th><th>Fecha</th><th>U.F.</th><th>Código</th><th>Estado</th><th>Cargó</th><th>Resultado</th></tr></thead><tbody>
+      ${res.filas.map(f => `<tr class="imp-${f.resultado}"><td class="cnt">${f.fila}</td><td class="mono">${esc(f.n || '—')}</td><td>${esc(f.fecha || '')}</td><td>${esc(f.uf || '')}</td><td class="mono">${esc(f.codigo || '')}</td><td>${esc(f.estado || '')}</td><td>${esc(f.cargo || '')}</td>
+        <td>${f.nuevo ? `<b>${esc(f.nuevo)}</b>` : esc(RES_TXT[f.resultado])}${f.motivo ? ` <span class="note">· ${esc(f.motivo)}</span>` : ''}</td></tr>`).join('')}
+      </tbody></table></div>` : ''}
+    <details id="iHistD"><summary class="sum">Importaciones anteriores</summary><div id="iHist" class="note">Cargando…</div></details>
+  `, res ? (hecho ? '<button type="button" class="pri" id="iOtra">Importar otro archivo</button>'
+               : `<button type="button" id="iOtra">Elegir otro archivo</button><button type="button" class="pri" id="iOk" ${cuenta('nueva') ? '' : 'disabled'}>Importar ${cuenta('nueva')} ${cuenta('nueva') === 1 ? 'falta' : 'faltas'}</button>`)
+         : '<button type="button" id="iX">Cancelar</button><button type="button" class="pri" id="iRev">Revisar archivo</button>');
+  m.querySelector('.dlg').classList.add('ancho');
+  const enviar = async (file, confirmar) => {
+    const fd = new FormData(); fd.append('archivo', file, file.name); fd.append('confirmar', confirmar ? '1' : '0');
+    return api('/importar/faltas', {method: 'POST', form: fd});
+  };
+  if ($('iX')) $('iX').onclick = cerrarModal;
+  if ($('iOtra')) $('iOtra').onclick = () => importar();
+  if ($('iRev')) $('iRev').onclick = async () => {
+    const file = $('iF').files[0]; if (!file) { toast('Elegí el archivo CSV.', true); return; }
+    try { busy('Revisando…'); const r = await enviar(file, false); busy(''); importar(r, file); } catch (e) { busy(''); error(e); }
+  };
+  if ($('iOk')) $('iOk').onclick = async () => {
+    try { busy('Importando…'); const r = await enviar(archivo, true); busy(''); toast(`${r.filas.filter(f => f.nuevo).length} faltas importadas`); await cargar(); importar(r, archivo); }
+    catch (e) { busy(''); error(e); }
+  };
+  $('iHistD').ontoggle = async () => {
+    if (!$('iHistD').open) return;
+    try {
+      const h = await api('/importar/historial');
+      $('iHist').innerHTML = h.length ? `<table class="cat"><thead><tr><th>Fecha</th><th>Archivo</th><th class="cnt">Filas</th><th class="cnt">Creadas</th><th class="cnt">Omitidas</th><th class="cnt">Errores</th><th>Quién</th></tr></thead><tbody>${h.map(x => `<tr><td>${fechaHora(x.creado)}</td><td>${esc(x.archivo)}</td><td class="cnt">${x.filas}</td><td class="cnt">${x.creadas}</td><td class="cnt">${x.omitidas}</td><td class="cnt">${x.errores}</td><td>${esc(x.usuario)}</td></tr>`).join('')}</tbody></table>` : 'Todavía no se importó nada.';
+    } catch (e) { $('iHist').textContent = 'No se pudo cargar.'; }
+  };
+}
+
 /* ───────── reportes (consulta, inspector y superiores) ───────── */
 const REP = {desde: '', hasta: '', sector: '', estado: '', rubro: ''};
 function qsRep() {
@@ -1134,6 +1183,7 @@ function miClave() {
   };
 }
 $('bUsr').onclick = usuarios;
+$('bImp').onclick = () => importar();
 $('uName').onclick = () => { if (YO) miClave(); };
 
 /* ───────── datos y aviso en vivo ───────── */
@@ -1169,6 +1219,7 @@ async function iniciar() {
   try { YO = await api('/yo'); } catch (e) { return; }
   $('uName').innerHTML = `<b>${esc(YO.nombre)}</b> · ${esc(YO.rol)}`;
   $('bUsr').hidden = !puede('admin');
+  $('bImp').hidden = !puede('admin');
   $('bLapiz').hidden = !puede('inspector');
   applyVB();
   await cargar().catch(error);

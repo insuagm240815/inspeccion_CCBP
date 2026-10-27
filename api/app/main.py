@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 
 from . import arranque
 from . import fotos as F
+from . import importar as IMP
 from .db import conexion, ejecutar, fila, filas, hoy, siguiente
 from .seguridad import COOKIE, COOKIE_SECURE, PH, SESION_HORAS, _sha, exigir, hash_clave, ip_de, login, logout, usuario_de
 
@@ -535,6 +536,49 @@ async def api_marca_borrar(n: str, req: Request):
     r = await run_in_threadpool(tx)
     cambio()
     return r
+
+
+# ───────── importación de faltas desde la planilla de Reportes (solo admin) ─────────
+@app.post("/api/importar/faltas")
+async def api_importar(req: Request):
+    u = await run_in_threadpool(exigir, req, "admin", True)
+    form = await req.form()
+    f = form.get("archivo")
+    if not hasattr(f, "read"):
+        raise HTTPException(400, "Elegí el archivo CSV.")
+    raw = await f.read(IMP.MAX_BYTES + 1)
+    confirmar = form.get("confirmar") == "1"
+    nombre = (getattr(f, "filename", "") or "planilla.csv").replace("\\", "/").split("/")[-1]
+
+    def tx():
+        try:
+            rows = IMP.leer(raw)
+        except IMP.ErrorArchivo as e:
+            raise HTTPException(400, str(e))
+        with conexion() as c:
+            rows = IMP.analizar(c, rows)
+            nuevas = [d for d in rows if d["resultado"] == "nueva"]
+            imp = None
+            if confirmar and nuevas:
+                imp, _ = IMP.aplicar(c, nuevas, nombre, u["id_usuario"])
+                cuenta = {k: sum(1 for d in rows if d["resultado"] == k) for k in ("nueva", "omitida", "error")}
+                ejecutar(c, "UPDATE importacion SET filas=%s, creadas=%s, omitidas=%s, errores=%s WHERE id_importacion=%s",
+                         (len(rows), cuenta["nueva"], cuenta["omitida"], cuenta["error"], imp))
+        return {"archivo": nombre, "confirmado": bool(confirmar and nuevas), "importacion": imp, "filas": [
+            {k: d.get(k) for k in ("fila", "n", "fecha", "uf", "codigo", "estado", "cargo", "resultado", "motivo", "nuevo")} for d in rows]}
+
+    r = await run_in_threadpool(tx)
+    if r["confirmado"]:
+        cambio()
+    return r
+
+
+@app.get("/api/importar/historial")
+def api_importar_hist(req: Request):
+    exigir(req, "admin")
+    with conexion() as c:
+        return filas(c, """SELECT i.id_importacion id, i.archivo, i.filas, i.creadas, i.omitidas, i.errores, i.creado, u.nombre usuario
+                           FROM importacion i JOIN usuario u ON u.id_usuario = i.id_usuario ORDER BY i.id_importacion DESC LIMIT 30""")
 
 
 # ───────── catálogo ─────────

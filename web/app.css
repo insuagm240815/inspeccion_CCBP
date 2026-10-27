@@ -261,3 +261,7 @@ button.link:hover{color:var(--ink);text-decoration:underline}
 .dibujo .row{flex-wrap:wrap;gap:6px}
 button.wa{background:#1F9D55;border-color:#1F9D55;color:#fff}
 button.wa:hover{filter:brightness(1.08)}
+.imp-reglas{margin:0 0 6px;padding-left:18px;display:flex;flex-direction:column;gap:3px}
+.imp-tot{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 10px}
+table.cat tr.imp-error td{background:var(--danger-soft)}
+table.cat tr.imp-omitida td{opacity:.6}
