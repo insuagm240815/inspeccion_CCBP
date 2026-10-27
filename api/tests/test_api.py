@@ -483,7 +483,7 @@ def test_red_y_recorrido(usuarios):
     assert ins.get("/api/itinerarios/actual").json() is None
 
     # editor de red: solo admin; un tramo cerrado deja de usarse
-    t = calles[len(calles) // 4]
+    t = calles[len(calles) // 2 + 3]          # un tramo sin paradas encima: cerrarlo solo puede alargar el recorrido
     assert ins.put(f"/api/red/tramos/{t['id']}", json={"tipo": "cerrado"}, headers=H).status_code == 403
     try:
         assert adm.put(f"/api/red/tramos/{t['id']}", json={"tipo": "cerrado"}, headers=H).status_code == 200
