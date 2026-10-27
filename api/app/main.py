@@ -15,6 +15,7 @@ from . import fotos as F
 from . import importar as IMP
 from . import importar_base as IMPB
 from . import ruteo as RUT
+from . import ficha_pdf as FICHA
 from .db import conexion, ejecutar, fila, filas, hoy, siguiente
 from .seguridad import COOKIE, COOKIE_SECURE, PH, SESION_HORAS, _sha, exigir, hash_clave, ip_de, login, logout, usuario_de
 
@@ -188,6 +189,22 @@ def api_foto(nro: str, req: Request):
         raise HTTPException(404, "No existe esa foto.")
     return FileResponse(F.ruta(f["archivo"]), media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.get("/api/faltas/{n}/pdf")
+def api_falta_pdf(n: str, req: Request):
+    """Ficha de la falta en PDF, con las fotos adjuntas."""
+    exigir(req, "consulta")
+    with conexion() as c:
+        h = FICHA.datos(c, n[:10])
+    if not h:
+        raise HTTPException(404, f"No encontré la falta {n}.")
+    host = req.headers.get("x-forwarded-host") or req.headers.get("host") or "localhost"
+    esquema = "http" if host.split(":")[0] in ("localhost", "127.0.0.1") else "https"
+    pdf = FICHA.generar(h, f"{esquema}://{host}")
+    nombre = f"Falta {h['nro_hallazgo']} UF {h['uf']}.pdf"
+    return Response(pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre}"', "Cache-Control": "no-store"})
 
 
 @app.get("/api/eventos")

@@ -208,6 +208,20 @@ Lo que se manda por WhatsApp sale del servidor del country: enviar solo a contac
 | Crear, editar, redibujar y cerrar (Reparado o No corresponde) | | ✔ | ✔ |
 | Borrar (con motivo) | | | ✔ |
 
+## Ficha de falta en PDF
+
+Cada falta tiene el botón **Ficha PDF**, al pie de su ficha, y lo ven todos los perfiles. Descarga `Falta F-0124 UF 2923.pdf` con el formato de Inspección técnica:
+
+- **Encabezado:** escudo, fecha de emisión y número.
+- **Barra:** U.F. (indica si está unificada), sector y número de falta.
+- **En resumen:** estado, días abierta o fecha de cierre, próxima revisión y si está derivada a Comisión.
+- **Falta:** código, descripción, norma, artículo, penalidad y estado.
+- **Datos:** U.F., sector, rubro, visita, revisión, reiterancia y observación.
+- **Fotos:** con su link "Descargar foto" (abre la foto en la app; pide iniciar sesión).
+- **Historial** de movimientos y línea de **firma y aclaración**.
+
+Las fotos van además **adjuntas al PDF** en tamaño completo: se bajan desde el panel de adjuntos del visor (el ícono del clip). Para generar el PDF, la API usa `reportlab` y `pypdf`.
+
 ## Recorrido del día
 
 El botón **Recorrido** lo usan el inspector, el supervisor y el admin.

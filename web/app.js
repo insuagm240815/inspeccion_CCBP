@@ -463,7 +463,7 @@ function fichaFalta(n) {
     </dl>
     ${fotosDe(n)}
     <div class="list"><h3>Historial</h3><div class="timeline">${hs.map(x => `<div><span class="d">${fmt(x.fecha)} · ${quien(x.autor)}</span><br>${esc(x.cambio)}${x.nota ? ' — ' + esc(x.nota) : ''}</div>`).join('') || '<p class="empty">Sin movimientos.</p>'}</div></div>
-  `, `${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${puede('inspector') && abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}${puede('inspector') ? '<button type="button" class="pri" id="aEstado">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta(h) ? '<button type="button" class="pri" id="aEstado">Gestionar</button>' : '')}`);
+  `, `<a class="btn" id="aPdf" href="/api/faltas/${encodeURIComponent(n)}/pdf" download title="Ficha de la falta en PDF, con las fotos adjuntas">Ficha PDF</a>${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${puede('inspector') && abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}${puede('inspector') ? '<button type="button" class="pri" id="aEstado">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta(h) ? '<button type="button" class="pri" id="aEstado">Gestionar</button>' : '')}`);
   if ($('aEstado')) $('aEstado').onclick = () => formEstado(n);
   if ($('aRepro')) $('aRepro').onclick = () => formRepro(n);
   if ($('aBorrar')) $('aBorrar').onclick = () => formBorrar(n);

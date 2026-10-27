@@ -496,3 +496,25 @@ def test_red_y_recorrido(usuarios):
         with conexion() as c:
             ejecutar(c, "UPDATE red_tramo SET revisado=%s, modificado=NULL, id_usuario=NULL WHERE id_tramo=%s", (t["revisado"], t["id"]))
     assert adm.put("/api/red/inicio", json={"x": 99999, "y": 0}, headers=H).status_code == 400
+
+
+def test_ficha_pdf(usuarios):
+    import json
+    from pypdf import PdfReader
+    ins, con = cliente(usuarios["inspector"]), cliente(usuarios["consulta"])
+    with conexion() as c:
+        f = str(fila(c, "SELECT CURDATE() d")["d"])
+    d = {"uf": 1300, "fecha": f, "origen": "Recorrido de inspección", "contacto": "No había nadie",
+         "faltas": [{"codigo": "EJ-02", "estado": "Pendiente", "revision": "2099-01-01", "obs": "Cerco caído → avisado"}]}
+    r = ins.post("/api/visitas", data={"datos": json.dumps(d)},
+                 files=[("f_0", ("a.jpg", jpeg(800, 600), "image/jpeg")), ("f_0", ("b.jpg", jpeg(600, 800), "image/jpeg"))], headers=H)
+    nf = r.json()["faltas"][0]
+    r = con.get(f"/api/faltas/{nf}/pdf")                   # el de consulta también puede descargarla
+    assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"
+    assert f'Falta {nf} UF 1300.pdf' in r.headers["content-disposition"]
+    pdf = PdfReader(io.BytesIO(r.content))
+    texto = " ".join(p.extract_text() for p in pdf.pages)
+    assert "Ficha de falta" in texto and nf in texto and "Cerco ca" in texto and "HISTORIAL" in texto.replace(" ", "")
+    assert len(pdf.attachments) == 2
+    assert TestClient(app).get(f"/api/faltas/{nf}/pdf").status_code == 401
+    assert con.get("/api/faltas/F-99999/pdf").status_code == 404
