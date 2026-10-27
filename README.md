@@ -245,7 +245,7 @@ La red se extrajo del plano con `herramientas/red_calles`: es el eje del espacio
 - **Avisos de la barra:** si la red vehicular quedó partida y qué lotes no tienen calle a menos de 40 m.
 - **Mover punto de salida:** cambia la S, el punto fijo desde donde arrancan los recorridos.
 
-Los tramos junto al golf y al club, que el plano no permitía clasificar, ya se confirmaron como calles vehiculares (migración `009`).
+Los tramos junto al golf y al club, que el plano no permitía clasificar, ya están resueltos. Los del lado del club son calles vehiculares (migración `009`). Los que bordean el golf, en los lados oeste y norte, no son calles y se quitaron de la red (migración `010`).
 
 ## Importar la planilla de Construcciones (solo admin)
 
