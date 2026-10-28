@@ -894,11 +894,39 @@ async function compartirMarca(n, prep) {
    hasta 200 caracteres) y el enlace a la ficha en la app (pide iniciar sesión, así los datos no quedan expuestos). */
 function enlaceApp(hash) { return location.origin + location.pathname + '#' + hash; }
 async function compartirTeams(text, corto, hash, n, prep, titulo) {
-  if (navigator.share) return compartirWa(text + '\n' + enlaceApp(hash), n, prep, titulo);
-  const msg = corto.length > 195 ? corto.slice(0, 192) + '…' : corto;
-  const url = 'https://teams.microsoft.com/share?href=' + encodeURIComponent(enlaceApp(hash)) + '&msgText=' + encodeURIComponent(msg) + '&preview=false';
-  window.open(url, 'ms-teams-share', 'width=720,height=640');
-  if (S.fotos.some(f => f.reg === n)) toast('Desde la PC Teams no deja adjuntar las fotos por enlace: el mensaje lleva el link a la ficha, donde están las fotos (o adjuntá la Ficha PDF).');
+  /* El lanzador "Share to Teams" pierde el texto en muchas instalaciones (sobre todo si abre la app de escritorio).
+     Se usa el enlace oficial de chat de Teams, que sí lleva el mensaje escrito: abre un chat con las personas
+     indicadas y el texto listo para enviar. El texto también se copia, para pegarlo en un canal si hace falta. */
+  const msg = text + '\n' + enlaceApp(hash);
+  let para = ''; try { para = localStorage.getItem('ccbp_teams_para') || ''; } catch (e) {}
+  const hayFotos = S.fotos.some(f => f.reg === n);
+  modal('Enviar por Teams · ' + titulo, `
+    <div class="f"><label for="tmPara">Para (correos de Microsoft 365, separados por coma)</label>
+      <input id="tmPara" type="text" inputmode="email" autocomplete="email" placeholder="mantenimiento@ccbp.com.ar, juan.perez@ccbp.com.ar" value="${esc(para)}"></div>
+    <div class="f"><label for="tmMsg">Mensaje</label><textarea id="tmMsg" rows="8">${esc(msg)}</textarea></div>
+    <p class="note">Con una persona se abre el chat con ella; con varias, un chat grupal. Para publicar en un <b>canal</b>, tocá "Copiar texto" y pegalo en el canal.${hayFotos ? ' Las fotos no viajan por el enlace: ' + (navigator.share ? 'usá "Compartir fotos" y elegí Teams.' : 'están en la ficha (link del mensaje) o adjuntá la Ficha PDF.') : ''}</p>
+  `, `<button type="button" id="tmCopiar">Copiar texto</button>${hayFotos && navigator.share ? '<button type="button" id="tmFotos">Compartir fotos</button>' : ''}<button type="button" class="teams" id="tmAbrir">Abrir chat de Teams</button>`);
+  const copiar = async () => {
+    const v = $('tmMsg').value;
+    try { await navigator.clipboard.writeText(v); return true; }
+    catch (e) { $('tmMsg').select(); try { return document.execCommand('copy'); } catch (x) { return false; } }
+  };
+  $('tmCopiar').onclick = async () => { toast(await copiar() ? 'Texto copiado: pegalo en Teams (Ctrl+V).' : 'No se pudo copiar: seleccioná el texto y copialo a mano.', false); };
+  if ($('tmFotos')) $('tmFotos').onclick = async () => {
+    const files = await prep;
+    try { if (files.length && navigator.canShare({files})) await navigator.share({files, title: titulo}); else toast('Este celular no permite compartir las fotos.', true); }
+    catch (e) { if (e.name !== 'AbortError') toast('No se pudieron compartir las fotos.', true); }
+  };
+  $('tmAbrir').onclick = async () => {
+    const correos = $('tmPara').value.split(/[;,\s]+/).map(s => s.trim()).filter(s => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s));
+    try { localStorage.setItem('ccbp_teams_para', correos.join(', ')); } catch (e) {}
+    await copiar();
+    if (!correos.length) { window.open('https://teams.microsoft.com/', '_blank', 'noopener'); toast('Sin destinatarios: se abrió Teams y el texto quedó copiado. Pegalo en el chat o canal (Ctrl+V).'); return; }
+    let v = $('tmMsg').value; if (v.length > 1500) v = v.slice(0, 1497) + '…';
+    const url = 'https://teams.microsoft.com/l/chat/0/0?users=' + encodeURIComponent(correos.join(',')) + (correos.length > 1 ? '&topicName=' + encodeURIComponent(titulo) : '') + '&message=' + encodeURIComponent(v);
+    window.open(url, '_blank', 'noopener');
+    toast('Se abrió el chat en Teams con el mensaje escrito (también quedó copiado).');
+  };
 }
 /* enlaces directos: …/#falta=F-0124 o …/#marca=M-0003 abren esa ficha (después de iniciar sesión) */
 function abrirDesdeEnlace() {
