@@ -208,6 +208,14 @@ Lo que se manda por WhatsApp sale del servidor del country: enviar solo a contac
 | Crear, editar, redibujar y cerrar (Reparado o No corresponde) | | ✔ | ✔ |
 | Borrar (con motivo) | | | ✔ |
 
+## Enviar una falta por WhatsApp
+
+La ficha de cada falta tiene el botón **WhatsApp**:
+- **En el celular:** se abre el menú de compartir del teléfono. Se elige WhatsApp y el contacto o grupo, y se envían la descripción de la falta y hasta 4 fotos. La descripción incluye U.F., sector, código y tipo, norma, estado, fechas, reiterancia, observación y un enlace de Google Maps al lote.
+- **En la PC:** se abre WhatsApp Web solo con el texto, porque WhatsApp no permite adjuntar fotos por enlace.
+
+Lo enviado incluye datos de una U.F. y su infracción: mandarlo solo a contactos o grupos de trabajo.
+
 ## Ficha de falta en PDF
 
 Cada falta tiene el botón **Ficha PDF**, al pie de su ficha, y lo ven todos los perfiles. Descarga `Falta F-0124 UF 2923.pdf` con el formato de Inspección técnica:

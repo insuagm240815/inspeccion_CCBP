@@ -487,11 +487,25 @@ function fichaFalta(n) {
     </dl>
     ${fotosDe(n)}
     <div class="list"><h3>Historial</h3><div class="timeline">${hs.map(x => `<div><span class="d">${fmt(x.fecha)} · ${quien(x.autor)}</span><br>${esc(x.cambio)}${x.nota ? ' — ' + esc(x.nota) : ''}</div>`).join('') || '<p class="empty">Sin movimientos.</p>'}</div></div>
-  `, `<a class="btn" id="aPdf" href="/api/faltas/${encodeURIComponent(n)}/pdf" download title="Ficha de la falta en PDF, con las fotos adjuntas">Ficha PDF</a>${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${puede('inspector') && abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}${puede('inspector') ? '<button type="button" class="pri" id="aEstado">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta(h) ? '<button type="button" class="pri" id="aEstado">Gestionar</button>' : '')}`);
+  `, `<button type="button" class="wa" id="aWa">WhatsApp</button><a class="btn" id="aPdf" href="/api/faltas/${encodeURIComponent(n)}/pdf" download title="Ficha de la falta en PDF, con las fotos adjuntas">Ficha PDF</a>${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${puede('inspector') && abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}${puede('inspector') ? '<button type="button" class="pri" id="aEstado">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta(h) ? '<button type="button" class="pri" id="aEstado">Gestionar</button>' : '')}`);
   if ($('aEstado')) $('aEstado').onclick = () => formEstado(n);
   if ($('aRepro')) $('aRepro').onclick = () => formRepro(n);
   if ($('aBorrar')) $('aBorrar').onclick = () => formBorrar(n);
+  const prep = prepararFotos(n);   // se bajan antes del toque: compartir exige hacerlo enseguida del clic
+  $('aWa').onclick = () => compartirWa(textoFalta(h), n, prep, 'Falta ' + n);
   return m;
+}
+function textoFalta(h) {
+  const ufs = grupoUF(h.uf), i = ufLot[h.uf], c = S.cat[h.codigo] || {};
+  const g = i != null ? aGeo(...LOTS[i].c) : null;
+  return [`*Falta ${h.n} · U.F. ${ufs.join(' / ')} · Sector ${sectorDe(h.uf)}*`,
+    `${h.codigo} — ${catTxt(h.codigo)}`,
+    c.norma ? `Norma: ${c.norma}${c.articulo ? ' art. ' + c.articulo : ''}` : '',
+    `Estado: ${h.estado}`,
+    `Detectada el ${fmt(h.fecha)}` + (abierta(h) ? (h.revision ? ` · próxima revisión ${fmt(h.revision)}` : '') : ` · cerrada el ${fmt(h.cierre)}`),
+    h.reit ? `Reiterancia: ${h.reit}` : '',
+    h.obs ? `Observación: ${h.obs}` : '',
+    g ? `Ubicación: https://www.google.com/maps/search/?api=1&query=${g.lat},${g.lon}` : ''].filter(Boolean).join('\n');
 }
 function formEstado(n) {
   const h = S.hallazgos[n], gestion = !puede('inspector');
@@ -871,7 +885,10 @@ function textoMarca(m) {
 }
 async function compartirMarca(n, prep) {
   const m = S.marcas[n]; if (!m) return;
-  const text = textoMarca(m);
+  return compartirWa(textoMarca(m), n, prep, 'Novedad ' + n);
+}
+/* WhatsApp: en el celular, menú de compartir del sistema (texto + hasta 4 fotos); en la PC, WhatsApp Web solo con el texto */
+async function compartirWa(text, n, prep, titulo) {
   const abrirWa = () => window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
   if (!navigator.share) {
     abrirWa();
@@ -880,8 +897,8 @@ async function compartirMarca(n, prep) {
   }
   const files = await prep;
   try {
-    if (files.length && navigator.canShare({files, text})) await navigator.share({files, text, title: 'Novedad ' + n});
-    else { await navigator.share({text, title: 'Novedad ' + n}); if (S.fotos.some(f => f.reg === n)) toast('Este celular no permite compartir las fotos junto con el texto.', true); }
+    if (files.length && navigator.canShare({files, text})) await navigator.share({files, text, title: titulo});
+    else { await navigator.share({text, title: titulo}); if (S.fotos.some(f => f.reg === n)) toast('Este celular no permite compartir las fotos junto con el texto.', true); }
   } catch (e) {
     if (e.name === 'AbortError') return;     // el usuario cerró el menú
     abrirWa();                               // p. ej. se venció el permiso del toque mientras bajaban las fotos
