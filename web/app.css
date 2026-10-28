@@ -328,3 +328,11 @@ table.cat tr.imp-omitida td{opacity:.6}
 @media (max-width:760px){.dibujo > .row:last-child{margin-left:0}}
 .legend span{display:flex;align-items:center}
 .legend .lg-n{margin-left:auto;padding-left:14px;font-family:var(--f-mono);font-weight:600;font-variant-numeric:tabular-nums}
+/* marcadores del recorrido: cuadrados, tamaño fijo en pantalla */
+.ruta-m{pointer-events:none}
+.ruta-m rect{stroke-width:2.5;vector-effect:non-scaling-stroke;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+.ruta-m .ruta-p{fill:var(--ruta);stroke:#fff}
+.ruta-m .ruta-p.hecha{fill:var(--mk-ok)} .ruta-m .ruta-p.salteada{fill:#9aa0a6}
+.ruta-m .ruta-p.sig{stroke:#111;stroke-width:3.5}
+.ruta-m .ruta-ini{fill:#222;stroke:#fff}
+.ruta-m .ruta-n{font:800 16px system-ui,sans-serif;fill:#fff;text-anchor:middle}

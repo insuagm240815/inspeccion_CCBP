@@ -100,7 +100,7 @@ const gLots = el('g', {}), gNum = el('g', {}), gRed = el('g', {}), gRuta = el('g
 const paths = LOTS.map((l, i) => el('path', {d: l.d, class: 'lot', 'data-i': i}, gLots));
 LOTS.forEach(l => { el('text', {x: l.c[0], y: l.c[1], class: 'num'}, gNum).textContent = l.n.join('/'); });
 
-function applyVB() { svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); svg.classList.toggle('near', vb.w < 700); }
+function applyVB() { svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); svg.classList.toggle('near', vb.w < 700); if (typeof escalarMarcadores === 'function' && gRuta.firstChild) escalarMarcadores(); }
 function aSvg(cx, cy) {
   const r = svg.getBoundingClientRect();
   const s = Math.max(vb.w / r.width, vb.h / r.height);
@@ -1024,7 +1024,8 @@ function planificar(limpiar) {
 }
 function marcarElegidos() {
   gRuta.innerHTML = '';
-  ELEG.forEach(i => { const [x, y] = LOTS[i].c; el('circle', {cx: x, cy: y, r: 13, class: 'ruta-p elegida'}, gRuta); });
+  ELEG.forEach(i => { const [x, y] = LOTS[i].c; marcador(x, y, '+', 'ruta-p elegida'); });
+  escalarMarcadores();
 }
 function barraPlan() {
   marcarElegidos();
@@ -1080,13 +1081,26 @@ function pintarRuta() {
   const pend = PREVIA ? null : ITIN.paradas.filter(p => p.estado === 'pendiente');
   piernas.forEach(p => el('polyline', {points: p.geo.map(q => q.join(',')).join(' '), class: 'ruta'}, gRuta));
   const ini = PREVIA ? PREVIA.inicio : ITIN.inicio;
-  el('rect', {x: ini.x - 13, y: ini.y - 13, width: 26, height: 26, rx: 5, class: 'ruta-ini'}, gRuta);
-  el('text', {x: ini.x, y: ini.y + 6, class: 'ruta-n'}, gRuta).textContent = 'S';
+  marcador(ini.x, ini.y, 'S', 'ruta-ini');
   paradas.forEach((p, k) => {
     const st = p.estado || 'pendiente', sig = pend && pend[0] === p;
-    el('circle', {cx: +p.x, cy: +p.y, r: sig ? 19 : 15, class: 'ruta-p ' + st + (sig ? ' sig' : '')}, gRuta);
-    el('text', {x: +p.x, y: +p.y + 5.5, class: 'ruta-n'}, gRuta).textContent = st === 'hecha' ? '✓' : String(k + 1);
+    marcador(+p.x, +p.y, st === 'hecha' ? '✓' : String(k + 1), 'ruta-p ' + st + (sig ? ' sig' : ''));
   });
+  escalarMarcadores();
+}
+if (window.ResizeObserver) new ResizeObserver(() => { if (gRuta.firstChild) escalarMarcadores(); }).observe(svg);
+/* marcadores cuadrados numerados: mismo tamaño en pantalla con cualquier zoom */
+function marcador(x, y, txt, clase) {
+  const g = el('g', {class: 'ruta-m', 'data-x': x, 'data-y': y}, gRuta);
+  const s = txt.length > 2 ? 34 : 28;
+  el('rect', {x: -s / 2, y: -14, width: s, height: 28, rx: 5, class: clase}, g);
+  el('text', {x: 0, y: 6, class: 'ruta-n'}, g).textContent = txt;
+  return g;
+}
+function escalarMarcadores() {
+  const r = svg.getBoundingClientRect(); if (!r.width) return;
+  const k = Math.max(vb.w / r.width, vb.h / r.height);       // unidades del plano por píxel de pantalla
+  gRuta.querySelectorAll('.ruta-m').forEach(g => g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${k})`));
 }
 function barraRuta() {
   const b = $('itBar');
