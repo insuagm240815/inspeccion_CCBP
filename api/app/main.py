@@ -16,6 +16,7 @@ from . import importar as IMP
 from . import importar_base as IMPB
 from . import ruteo as RUT
 from . import ficha_pdf as FICHA
+from . import geo as GEO
 from .db import conexion, ejecutar, fila, filas, hoy, siguiente
 from .seguridad import COOKIE, COOKIE_SECURE, PH, SESION_HORAS, _sha, exigir, hash_clave, ip_de, login, logout, usuario_de
 
@@ -169,6 +170,7 @@ def api_estado(req: Request):
                                     FROM catalogo_falta c JOIN rubro r ON r.id_rubro = c.id_rubro"""),
             "usuarios": filas(c, "SELECT id_usuario id, nombre FROM usuario"),
             "pendientes_visita": _pendientes_visita(c),
+            "calibracion": GEO.cargar(c, fila),
             "marcas": filas(c, """SELECT m.nro_marca n, m.fecha, m.tipo, m.descripcion, m.forma, m.geometria geo, m.lugar,
                                   s.nombre sector, m.estado, m.fecha_revision revision, m.fecha_cierre cierre, m.observacion obs,
                                   m.lat, m.lon, m.precision_m prec, m.ubicacion ubic, m.id_usuario autor FROM marca m LEFT JOIN sector s ON s.id_sector = m.id_sector"""),
@@ -878,6 +880,102 @@ def api_itin_lista(req: Request):
             out.append({k: it[k] for k in ("id_itinerario", "fecha", "usuario", "modo", "km_plan", "minutos_plan", "estado", "hechas", "salteadas")}
                        | {"paradas": len(it["paradas"])})
         return out
+
+
+# ───────── calibración del plano (solo admin) ─────────
+def _puntos_calib(c, solo_activos=False):
+    ps = filas(c, f"""SELECT p.id_punto id, p.x, p.y, p.lat, p.lon, p.origen, p.prec_m, p.nota, p.activo, p.creado, u.nombre usuario
+                      FROM calib_punto p JOIN usuario u ON u.id_usuario=p.id_usuario
+                      {'WHERE p.activo' if solo_activos else ''} ORDER BY p.id_punto""")
+    for p in ps:
+        for k in ("x", "y", "lat", "lon"):
+            p[k] = float(p[k])
+        p["activo"] = bool(p["activo"])
+    return ps
+
+
+@app.get("/api/calibracion")
+def api_calib(req: Request):
+    exigir(req, "admin")
+    with conexion() as c:
+        return {"puntos": _puntos_calib(c), "actual": GEO.cargar(c, fila)}
+
+
+@app.post("/api/calibracion/puntos")
+async def api_calib_punto(req: Request):
+    u = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+    x, y = _xy(d, "punto del plano")
+    lat, lon = _coord(d.get("lat"), -35.5, -33.5), _coord(d.get("lon"), -59.8, -57.8)
+    if lat is None or lon is None:
+        raise HTTPException(400, "Las coordenadas no son válidas o quedan lejos del country (formato: -34.60123, -58.86012).")
+    origen = "gps" if d.get("origen") == "gps" else "mapa"
+    try:
+        prec = min(max(int(float(d.get("prec"))), 0), 65000) if d.get("prec") not in (None, "") else None
+    except (TypeError, ValueError):
+        prec = None
+
+    def tx():
+        with conexion() as c:
+            ejecutar(c, "INSERT INTO calib_punto (x, y, lat, lon, origen, prec_m, nota, id_usuario) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                     (round(x, 1), round(y, 1), lat, lon, origen, prec, _texto(d.get("nota"), 120) or None, u["id_usuario"]))
+            return {"puntos": _puntos_calib(c)}
+    return await run_in_threadpool(tx)
+
+
+@app.put("/api/calibracion/puntos/{pid}")
+async def api_calib_punto_mod(pid: int, req: Request):
+    await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            if d.get("borrar"):
+                ejecutar(c, "DELETE FROM calib_punto WHERE id_punto=%s", (pid,))
+            else:
+                ejecutar(c, "UPDATE calib_punto SET activo=%s WHERE id_punto=%s", (bool(d.get("activo")), pid))
+            return {"puntos": _puntos_calib(c)}
+    return await run_in_threadpool(tx)
+
+
+@app.post("/api/calibracion/calcular")
+async def api_calib_calcular(req: Request):
+    """Calcula el ajuste con los puntos activos y devuelve el error de cada uno. Con aplicar=true, lo pone en uso."""
+    u = await run_in_threadpool(exigir, req, "admin", True)
+    d = await req.json()
+
+    def tx():
+        with conexion() as c:
+            ps = _puntos_calib(c, True)
+            try:
+                cal, det = GEO.calcular(ps, bool(d.get("local")))
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            comparacion = None
+            if len(ps) >= 6:                      # para decidir si conviene la corrección local
+                otra, _ = GEO.calcular(ps, not cal["local"])
+                comparacion = {"afin": (otra if cal["local"] else cal)["error_m"], "local": (cal if cal["local"] else otra)["error_m"]}
+            if d.get("aplicar"):
+                cal["origen"] = f"{len(ps)} puntos de control · {hoy().strftime('%d/%m/%Y')} · {u['nombre']}"
+                ejecutar(c, "REPLACE INTO ajuste (clave, valor) VALUES ('calibracion', %s)", (json.dumps(cal),))
+            return {"calibracion": cal, "detalle": det, "aplicada": bool(d.get("aplicar")), "comparacion": comparacion}
+    r = await run_in_threadpool(tx)
+    if r["aplicada"]:
+        cambio()
+    return r
+
+
+@app.post("/api/calibracion/restablecer")
+async def api_calib_reset(req: Request):
+    await run_in_threadpool(exigir, req, "admin", True)
+
+    def tx():
+        with conexion() as c:
+            ejecutar(c, "DELETE FROM ajuste WHERE clave='calibracion'")
+        return {"ok": True}
+    r = await run_in_threadpool(tx)
+    cambio()
+    return r
 
 
 # ───────── importación de faltas desde la planilla de Reportes (solo admin) ─────────

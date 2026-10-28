@@ -17,6 +17,7 @@ import json
 import re
 import unicodedata
 
+from . import geo as GEO
 from .db import ejecutar, fila, filas, siguiente
 
 MAX_BYTES = 15 * 1024 * 1024
@@ -400,7 +401,7 @@ def _marcas(x, hojas):
                     x.cuenta('Marcas', 'sin_cambios')
                 continue
             cx, cy = sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)
-            lat, lon = a_geo(cx, cy)
+            lat, lon = GEO.a_geo(x.cal, cx, cy)
             nm = x.numero('M', n, 'registro', 'nro_registro')
             ejecutar(x.c, "INSERT INTO registro (nro_registro, tipo) VALUES (%s,'M')", (nm,))
             ejecutar(x.c, """INSERT INTO marca (nro_marca, fecha, tipo, descripcion, forma, geometria, lugar, id_sector, estado,
@@ -462,6 +463,7 @@ def _historial(x, hojas, faltas, marcas, vis):
 
 def procesar(c, hojas, archivo, admin_id):
     x = _Ctx(c, admin_id)
+    x.cal = GEO.cargar(c, fila)
     ejecutar(c, "INSERT INTO importacion (archivo, filas, creadas, omitidas, errores, id_usuario) VALUES (%s,0,0,0,0,%s)",
              (archivo[:120], admin_id))
     x.imp = fila(c, 'SELECT LAST_INSERT_ID() id')['id']

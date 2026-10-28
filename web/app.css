@@ -339,3 +339,9 @@ table.cat tr.imp-omitida td{opacity:.6}
 :root{--pend:#7C3AED}
 .lot.pend-vis{stroke:var(--pend) !important;stroke-width:3 !important;stroke-dasharray:6 3;vector-effect:non-scaling-stroke;paint-order:stroke}
 .legend i.lg-pv{background:transparent;border:2px dashed var(--pend);box-sizing:border-box}
+/* calibración del plano */
+.ruta-m .cp{stroke:#fff}
+.ruta-m .cp-ok{fill:#2E9D55} .ruta-m .cp-med{fill:#D99A06} .ruta-m .cp-mal{fill:#D93A32} .ruta-m .cp-sin{fill:#3B6FD8} .ruta-m .cp-off{fill:#9aa0a6}
+#map.editando .ruta-m{pointer-events:auto;cursor:pointer}
+.cp-vec{stroke:#D93A32;stroke-width:2.5;vector-effect:non-scaling-stroke;stroke-linecap:round;pointer-events:none}
+.cp-nuevo{fill:#111;stroke:#fff;stroke-width:2;vector-effect:non-scaling-stroke}

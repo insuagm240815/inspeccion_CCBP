@@ -550,3 +550,37 @@ def test_llegada_y_pendientes_de_visita(usuarios):
     uf = sorted(otras)[0]
     ins.post("/api/visitas", data={"datos": json.dumps({"uf": int(uf), "fecha": f, "origen": "Revisión de caso", "faltas": []})}, headers=H)
     assert uf not in {p["ref"] for p in ins.get("/api/estado").json()["pendientes_visita"]}
+
+
+def test_calibracion(usuarios):
+    from app import geo as G
+    adm, ins = cliente(usuarios["admin"]), cliente(usuarios["inspector"])
+    assert ins.get("/api/calibracion").status_code == 403
+    with conexion() as c:
+        ejecutar(c, "DELETE FROM calib_punto")
+    # puntos "verdaderos" generados con un ajuste conocido, distinto del inicial
+    verd = dict(G.DEFECTO, A=[0.2535, -0.3101, 480.0], B=[-0.3125, -0.2530, 915.0])
+    pts = [(300, 300), (1900, 250), (3600, 400), (500, 1600), (2000, 1700), (3500, 1500), (600, 3000), (1800, 3100), (3000, 2400)]
+    for x, y in pts:
+        lat, lon = G.a_geo(verd, x, y)
+        r = adm.post("/api/calibracion/puntos", json={"x": x, "y": y, "lat": lat, "lon": lon, "origen": "mapa"}, headers=H)
+        assert r.status_code == 200, r.text
+    assert adm.post("/api/calibracion/puntos", json={"x": 1, "y": 1, "lat": 10, "lon": 10}, headers=H).status_code == 400
+    r = adm.post("/api/calibracion/calcular", json={"local": False}, headers=H).json()
+    assert r["calibracion"]["error_m"] < 0.5 and not r["aplicada"] and r["comparacion"]
+    assert ins.get("/api/estado").json()["calibracion"]["origen"].startswith("inicial")      # calcular no aplica
+    r = adm.post("/api/calibracion/calcular", json={"local": False, "aplicar": True}, headers=H).json()
+    cal = ins.get("/api/estado").json()["calibracion"]
+    lat, lon = G.a_geo(cal, 1234, 2345)
+    assert (lat, lon) == G.a_geo(verd, 1234, 2345) or abs(lat - G.a_geo(verd, 1234, 2345)[0]) < 2e-6
+    x, y = G.a_plano(cal, lat, lon)
+    assert abs(x - 1234) < 0.5 and abs(y - 2345) < 0.5
+    # un punto mal cargado se detecta en la validación cruzada
+    adm.post("/api/calibracion/puntos", json={"x": 2600, "y": 900, "lat": G.a_geo(verd, 2600, 1100)[0], "lon": G.a_geo(verd, 2600, 1100)[1]}, headers=H)
+    r = adm.post("/api/calibracion/calcular", json={"local": False}, headers=H).json()
+    peor = max(r["detalle"], key=lambda d: d["error_m"])
+    assert peor["error_m"] > 50
+    assert adm.post("/api/calibracion/restablecer", json={}, headers=H).status_code == 200
+    assert ins.get("/api/estado").json()["calibracion"]["origen"].startswith("inicial")
+    with conexion() as c:
+        ejecutar(c, "DELETE FROM calib_punto")

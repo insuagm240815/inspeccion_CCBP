@@ -265,6 +265,21 @@ La propuesta muestra km, minutos y una estimación de nafta: 9 L/100 km urbano, 
 
 Cómo se calcula: cada parada se ancla al punto más cercano de la red de calles. Dijkstra (NetworkX) da la distancia real por calle entre paradas. El mejor orden se calcula exacto (Held-Karp) hasta 11 paradas libres; con más, se usa vecino más cercano + 2-opt.
 
+## Calibrar plano (solo admin)
+
+El plano de Construcciones no trae coordenadas. La calibración inicial salió de 3 puntos y tiene un error de unos 15 m. Para mejorarla:
+
+1. **Abrir:** **Calibrar plano**. Se ven los puntos de control cargados. La línea roja de cada punto muestra cuánto erra hoy el plano en ese lugar; con zoom se ve mejor.
+2. **Cargar puntos:** se toca en el plano un lugar reconocible (esquina de calle, pilar, tapa) y se carga su coordenada real de una de dos formas:
+   - **Desde la oficina:** en Google Maps (vista satélite), clic derecho exactamente en el mismo lugar → clic en las coordenadas para copiarlas → pegarlas en la app. El modal tiene un enlace que abre Google Maps en esa zona.
+   - **En el lugar:** **📍 Promediar mi GPS** junta lecturas durante 20 segundos (solo las de ±25 m o mejor) y las promedia.
+3. **Cantidad:** cargar **15 a 20 puntos repartidos en todo el country**. La barra avisa qué zonas quedaron sin puntos.
+4. **Calcular:** muestra el error estimado de cada punto, calculado *sin ese punto*, que es la precisión real esperable en esa zona. Los colores son verde (< 3 m), amarillo (3–6 m) y rojo (> 6 m). Un punto rojo muy alto suele ser un punto mal marcado: se toca y se desactiva o se borra.
+5. **Corrección local (opcional):** además del ajuste general (escala, giro y deformación), corrige zona por zona. La barra compara los dos errores para saber cuál conviene.
+6. **Aplicar:** la calibración nueva pasa a usarse en todos los celulares: punto azul, aviso de llegada, novedades con GPS y enlaces a Google Maps. **Volver a la inicial** deshace.
+
+El cálculo está en `api/app/geo.py` y se repite igual en `web/app.js`.
+
 ## Red de calles (solo admin)
 
 La red se extrajo del plano con `herramientas/red_calles`: es el eje del espacio libre entre lotes, clasificado por ancho. El botón **Red de calles** la muestra coloreada:

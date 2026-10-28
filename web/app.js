@@ -100,7 +100,7 @@ const gLots = el('g', {}), gNum = el('g', {}), gRed = el('g', {}), gRuta = el('g
 const paths = LOTS.map((l, i) => el('path', {d: l.d, class: 'lot', 'data-i': i}, gLots));
 LOTS.forEach(l => { el('text', {x: l.c[0], y: l.c[1], class: 'num'}, gNum).textContent = l.n.join('/'); });
 
-function applyVB() { svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); svg.classList.toggle('near', vb.w < 700); if (typeof escalarMarcadores === 'function' && gRuta.firstChild) escalarMarcadores(); }
+function applyVB() { svg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); svg.classList.toggle('near', vb.w < 700); if (typeof escalarMarcadores === 'function' && (gRuta.firstChild || gRed.firstChild)) escalarMarcadores(); }
 function aSvg(cx, cy) {
   const r = svg.getBoundingClientRect();
   const s = Math.max(vb.w / r.width, vb.h / r.height);
@@ -197,17 +197,38 @@ $('zOut').onclick = () => zoomCentro(1.5);
 $('zAll').onclick = () => { vb = {...FULL}; applyVB(); };
 
 /* ───────── GPS ─────────
-   Calibración del plano de Construcciones (3 puntos sobre línea municipal, 30/09/2026:
-   U.F. 1198/1199 · 655/656 · 2450/2451). Error medio ≈ 15 m, del orden del GPS del celular. */
-const CAL = {lat0: -34.6, lon0: -58.86, kx: 91631.5405, ky: 110574, a: 0.25210266, b: -0.31173198, tx: 472.03627, ty: 926.57710};
-const M_POR_UNIDAD = Math.sqrt(CAL.a * CAL.a + CAL.b * CAL.b);
-function aPlano(lat, lon) {
-  const E = (lon - CAL.lon0) * CAL.kx - CAL.tx, N = (lat - CAL.lat0) * CAL.ky - CAL.ty, d = CAL.a * CAL.a + CAL.b * CAL.b;
-  return {x: (CAL.a * E + CAL.b * N) / d, y: (CAL.b * E - CAL.a * N) / d};
+   Georreferencia del plano (misma fórmula que api/app/geo.py): proyección local en metros, ajuste afín con los
+   puntos de control y, si está activada, corrección local por distancia inversa. La calibración inicial salió de
+   3 puntos (error ≈ 15 m); el admin la mejora desde "Calibrar plano" y llega a todos en /api/estado. */
+const CAL0 = {lat0: -34.6, lon0: -58.86, kx: 91631.5405, ky: 110574, A: [0.25210266, -0.31173198, 472.03627], B: [-0.31173198, -0.25210266, 926.57710], local: false, res: []};
+let CAL = CAL0;
+let M_POR_UNIDAD = Math.sqrt(Math.abs(CAL.A[0] * CAL.B[1] - CAL.A[1] * CAL.B[0]));
+const ALCANCE_CAL = 600;
+function usarCalibracion(c) {
+  CAL = c && c.A ? c : CAL0;
+  M_POR_UNIDAD = Math.sqrt(Math.abs(CAL.A[0] * CAL.B[1] - CAL.A[1] * CAL.B[0]));
 }
-function aGeo(x, y) {   // inversa de aPlano: coordenada del plano → lat/lon
-  const E = CAL.a * x + CAL.b * y, N = CAL.b * x - CAL.a * y;
-  return {lat: +((N + CAL.ty) / CAL.ky + CAL.lat0).toFixed(6), lon: +((E + CAL.tx) / CAL.kx + CAL.lon0).toFixed(6)};
+function corrCal(c, x, y) {
+  if (!c.local || !c.res || !c.res.length) return [0, 0];
+  let sw = 1 / (ALCANCE_CAL * ALCANCE_CAL), se = 0, sn = 0;
+  for (const [px, py, de, dn] of c.res) {
+    const d2 = (x - px) ** 2 + (y - py) ** 2;
+    if (d2 < 1e-6) return [de, dn];
+    const w = 1 / d2; sw += w; se += w * de; sn += w * dn;
+  }
+  return [se / sw, sn / sw];
+}
+function aMetros(c, x, y) { const [de, dn] = corrCal(c, x, y); return [c.A[0] * x + c.A[1] * y + c.A[2] + de, c.B[0] * x + c.B[1] * y + c.B[2] + dn]; }
+function aPlano(lat, lon, c = CAL) {
+  const E = (lon - c.lon0) * c.kx, N = (lat - c.lat0) * c.ky, A = c.A, B = c.B, det = A[0] * B[1] - A[1] * B[0];
+  const inv = (e, n) => { e -= A[2]; n -= B[2]; return [(B[1] * e - A[1] * n) / det, (-B[0] * e + A[0] * n) / det]; };
+  let [x, y] = inv(E, N);
+  for (let k = 0; k < 4; k++) { const [de, dn] = corrCal(c, x, y); [x, y] = inv(E - de, N - dn); }
+  return {x, y};
+}
+function aGeo(x, y, c = CAL) {   // inversa de aPlano: coordenada del plano → lat/lon
+  const [E, N] = aMetros(c, x, y);
+  return {lat: +(N / c.ky + c.lat0).toFixed(6), lon: +(E / c.kx + c.lon0).toFixed(6)};
 }
 let POS = null, watchId = null, seguir = false, avisoGps = false;
 const acc = el('circle', {class: 'gps-acc', r: 0}, gGps), dot = el('circle', {class: 'gps-dot', r: 9}, gGps);
@@ -1080,7 +1101,7 @@ function verRuta() {
   const w = Math.max(Math.max(...xs) - Math.min(...xs), (Math.max(...ys) - Math.min(...ys)) * FULL.w / FULL.h, 500) * 1.25;
   seguir = false; marcarGps(); centrar((Math.max(...xs) + Math.min(...xs)) / 2, (Math.max(...ys) + Math.min(...ys)) / 2, Math.min(w, FULL.w));
 }
-function salirModoMapa() { MAPA_MODO = null; ELEG = null; $('itBar').hidden = true; gRed.innerHTML = ''; svg.classList.remove('editando'); render(); if (PREVIA || ITIN) { pintarRuta(); barraRuta(); } }
+function salirModoMapa() { MAPA_MODO = null; ELEG = null; CALIB = null; $('itBar').hidden = true; gRed.innerHTML = ''; svg.classList.remove('editando'); render(); if (PREVIA || ITIN) { pintarRuta(); barraRuta(); } }
 
 /* dibujo del recorrido */
 function pintarRuta() {
@@ -1098,10 +1119,10 @@ function pintarRuta() {
   });
   escalarMarcadores();
 }
-if (window.ResizeObserver) new ResizeObserver(() => { if (gRuta.firstChild) escalarMarcadores(); }).observe(svg);
+if (window.ResizeObserver) new ResizeObserver(() => { if (gRuta.firstChild || gRed.firstChild) escalarMarcadores(); }).observe(svg);
 /* marcadores cuadrados numerados: mismo tamaño en pantalla con cualquier zoom */
-function marcador(x, y, txt, clase) {
-  const g = el('g', {class: 'ruta-m', 'data-x': x, 'data-y': y}, gRuta);
+function marcador(x, y, txt, clase, capa = gRuta, extra = {}) {
+  const g = el('g', Object.assign({class: 'ruta-m', 'data-x': x, 'data-y': y}, extra), capa);
   const s = txt.length > 2 ? 34 : 28;
   el('rect', {x: -s / 2, y: -14, width: s, height: 28, rx: 5, class: clase}, g);
   el('text', {x: 0, y: 6, class: 'ruta-n'}, g).textContent = txt;
@@ -1110,7 +1131,7 @@ function marcador(x, y, txt, clase) {
 function escalarMarcadores() {
   const r = svg.getBoundingClientRect(); if (!r.width) return;
   const k = Math.max(vb.w / r.width, vb.h / r.height);       // unidades del plano por píxel de pantalla
-  gRuta.querySelectorAll('.ruta-m').forEach(g => g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${k})`));
+  svg.querySelectorAll('.ruta-m').forEach(g => g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${k})`));
 }
 function barraRuta() {
   const b = $('itBar');
@@ -1371,6 +1392,143 @@ function formTramo(id) {
 }
 $('bRed').onclick = () => { if (MAPA_MODO) salirModoMapa(); editarRed(); };
 
+/* ───────── calibrar el plano (admin) ───────── */
+let CALIB = null;   // {puntos, actual, res: {calibracion, detalle, comparacion}, local}
+const ZONAS = [['norte', 'centro', 'sur'], ['oeste', 'centro', 'este']];
+function coberturaCalib() {
+  const act = CALIB.puntos.filter(p => p.activo), x0 = FULL.x, y0 = FULL.y, cw = FULL.w / 3, ch = FULL.h / 3, faltan = [];
+  for (let r = 0; r < 3; r++) for (let q = 0; q < 3; q++) {
+    const dentro = (x, y) => x >= x0 + q * cw && x < x0 + (q + 1) * cw && y >= y0 + r * ch && y < y0 + (r + 1) * ch;
+    if (LOTS.filter(l => dentro(l.c[0], l.c[1])).length < 40) continue;
+    if (!act.some(p => dentro(p.x, p.y))) faltan.push(r === 1 && q === 1 ? 'centro' : (ZONAS[0][r] === 'centro' ? '' : ZONAS[0][r]) + (ZONAS[1][q] === 'centro' ? '' : (r === 1 ? '' : '-') + ZONAS[1][q]));
+  }
+  return faltan;
+}
+function claseError(e) { return e == null ? 'cp-sin' : e < 3 ? 'cp-ok' : e < 6 ? 'cp-med' : 'cp-mal'; }
+function pintarCalib() {
+  gRed.innerHTML = '';
+  const det = {}; ((CALIB.res && CALIB.res.detalle) || []).forEach(d => { det[d.id] = d; });
+  CALIB.puntos.forEach((p, k) => {
+    const q = aPlano(p.lat, p.lon);        // dónde cae hoy esa coordenada: la línea muestra el error actual
+    el('line', {x1: p.x, y1: p.y, x2: q.x, y2: q.y, class: 'cp-vec'}, gRed);
+    const e = det[p.id] ? (det[p.id].error_m != null ? det[p.id].error_m : det[p.id].error_afin_m) : null;
+    marcador(p.x, p.y, String(k + 1), 'cp ' + (p.activo ? claseError(e) : 'cp-off'), gRed, {'data-cp': p.id});
+  });
+  escalarMarcadores();
+}
+function barraCalib() {
+  const b = $('itBar'), act = CALIB.puntos.filter(p => p.activo).length, r = CALIB.res, a = CALIB.actual, falt = coberturaCalib();
+  b.hidden = false;
+  b.innerHTML = `<div class="row"><b>Calibrar plano</b><span class="note">${act} punto${act === 1 ? '' : 's'} activo${act === 1 ? '' : 's'} · en uso: ${esc(a.origen || 'inicial')}${a.error_m != null ? ' (±' + a.error_m + ' m)' : ''}</span></div>
+    <p class="note">Tocá en el plano un lugar reconocible (esquina, pilar, tapa) para cargar su coordenada. Las líneas rojas muestran cuánto erra hoy el plano en cada punto.${act < 8 ? ` Conviene llegar a 15–20 puntos repartidos (faltan ${Math.max(0, 15 - act)}).` : ''}${falt.length ? ' Sin puntos en: ' + falt.join(', ') + '.' : ''}</p>
+    ${r ? `<p class="gpsinfo${r.calibracion.error_m > 6 ? ' lejos' : ''}">Con estos puntos: error estimado <b>±${r.calibracion.error_m != null ? r.calibracion.error_m : '?'} m</b>${r.calibracion.error_max_m != null ? ' (peor punto ' + r.calibracion.error_max_m + ' m)' : ''}${r.comparacion ? ` · ajuste general ±${r.comparacion.afin} m, con corrección local ±${r.comparacion.local} m` : ''}${r.aplicada ? ' · <b>aplicada</b>' : ''}</p>` : ''}
+    <div class="row"><label class="row chk"><input type="checkbox" id="cpLocal" ${CALIB.local ? 'checked' : ''}> Corrección local</label>
+      <button type="button" id="cpCalc" ${act >= 3 ? '' : 'disabled'}>Calcular</button>
+      <button type="button" class="pri" id="cpApl" ${act >= 3 ? '' : 'disabled'}>Aplicar</button>
+      <button type="button" id="cpReset">Volver a la inicial</button>
+      <button type="button" id="cpX">Salir</button></div>`;
+  $('cpLocal').onchange = e => { CALIB.local = e.target.checked; };
+  $('cpCalc').onclick = () => calcularCalib(false);
+  $('cpApl').onclick = () => calcularCalib(true);
+  $('cpReset').onclick = async () => {
+    try { busy('Restableciendo…'); await api('/calibracion/restablecer', {method: 'POST', json: {}}); busy(''); await cargar(); CALIB.actual = CAL; CALIB.res = null; pintarCalib(); barraCalib(); toast('Se volvió a la calibración inicial'); }
+    catch (e) { busy(''); error(e); }
+  };
+  $('cpX').onclick = () => { CALIB = null; salirModoMapa(); };
+}
+async function calcularCalib(aplicar) {
+  try {
+    busy(aplicar ? 'Aplicando…' : 'Calculando…');
+    CALIB.res = await api('/calibracion/calcular', {method: 'POST', json: {local: CALIB.local, aplicar}});
+    busy('');
+    if (aplicar) { await cargar(); CALIB.actual = CALIB.res.calibracion; toast(`Calibración aplicada: ±${CALIB.res.calibracion.error_m} m`); }
+    pintarCalib(); barraCalib();
+  } catch (e) { busy(''); error(e); }
+}
+async function calibrar() {
+  if (MAPA_MODO) salirModoMapa();
+  try { busy('Cargando…'); CALIB = await api('/calibracion'); CALIB.local = !!CALIB.actual.local; busy(''); } catch (e) { busy(''); error(e); return; }
+  gRuta.innerHTML = ''; svg.classList.add('editando');
+  MAPA_MODO = (e, t) => {
+    const g = t && t.closest ? t.closest('[data-cp]') : null;
+    if (g) { fichaPuntoCalib(+g.dataset.cp); return; }
+    const p = aSvg(e.clientX, e.clientY); nuevoPuntoCalib(p.x, p.y);
+  };
+  pintarCalib(); barraCalib();
+}
+function parseCoord(s) {
+  const m = String(s).replace(/[()°]/g, ' ').match(/(-?\d+(?:[.,]\d+)?)\s*[,;\s]\s*(-?\d+(?:[.,]\d+)?)/);
+  if (!m) return null;
+  const lat = parseFloat(m[1].replace(',', '.')), lon = parseFloat(m[2].replace(',', '.'));
+  return lat < -33.5 && lat > -35.5 && lon < -57.8 && lon > -59.8 ? {lat, lon} : null;
+}
+function nuevoPuntoCalib(x, y) {
+  const prev = aGeo(x, y);
+  el('circle', {cx: x, cy: y, r: 6, class: 'cp-nuevo'}, gRed);
+  modal('Nuevo punto de control', `
+    <p class="ftxt">Cargá la coordenada real del lugar que tocaste en el plano.</p>
+    <div class="f"><label for="cpC">Coordenadas (latitud, longitud)</label><input id="cpC" placeholder="-34.60123, -58.86012" autocomplete="off"></div>
+    <p class="note"><b>Desde la oficina:</b> en Google Maps, vista satélite, hacé clic derecho exactamente sobre el mismo lugar y tocá las coordenadas que aparecen arriba del menú: se copian. Pegalas acá. <a href="https://www.google.com/maps/@${prev.lat},${prev.lon},19z/data=!3m1!1e3" target="_blank" rel="noopener">Abrir Google Maps en esta zona</a></p>
+    <p class="note"><b>En el lugar:</b> parate justo ahí y tocá "Promediar mi GPS"; junta lecturas durante 20 segundos.</p>
+    <div class="row"><button type="button" id="cpGps">📍 Promediar mi GPS</button><span class="note" id="cpGpsTxt"></span></div>
+    <div class="f"><label for="cpN">Referencia (opcional)</label><input id="cpN" maxlength="120" placeholder="Ej.: esquina de la U.F. 1203, pilar de luz"></div>
+  `, '<button type="button" id="cpX2">Cancelar</button><button type="button" class="pri" id="cpOk">Guardar punto</button>');
+  let origen = 'mapa', prec = null;
+  const quitar = () => gRed.querySelectorAll('.cp-nuevo').forEach(n => n.remove());
+  $('cpX2').onclick = () => { cerrarModal(); quitar(); };
+  $('cpGps').onclick = () => {
+    if (!('geolocation' in navigator) || !window.isSecureContext) { toast('El GPS necesita la app abierta por HTTPS.', true); return; }
+    $('cpGps').disabled = true; const lect = [];
+    const id = navigator.geolocation.watchPosition(g => { if (g.coords.accuracy <= 25) lect.push(g.coords); }, () => {}, {enableHighAccuracy: true, maximumAge: 0, timeout: 20000});
+    const t0 = Date.now();
+    const tick = setInterval(() => {
+      const s = Math.round((Date.now() - t0) / 1000);
+      if ($('cpGpsTxt')) $('cpGpsTxt').textContent = `${s} s · ${lect.length} lecturas buenas`;
+      if (s < 20 || !$('cpC')) { if (!$('cpC')) { clearInterval(tick); navigator.geolocation.clearWatch(id); } return; }
+      clearInterval(tick); navigator.geolocation.clearWatch(id); $('cpGps').disabled = false;
+      if (lect.length < 3) { $('cpGpsTxt').textContent = 'No hubo suficientes lecturas precisas (±25 m o mejor). Probá al aire libre.'; return; }
+      const lat = lect.reduce((s, c) => s + c.latitude, 0) / lect.length, lon = lect.reduce((s, c) => s + c.longitude, 0) / lect.length;
+      prec = Math.round(lect.reduce((s, c) => s + c.accuracy, 0) / lect.length / Math.sqrt(lect.length) + 1);
+      origen = 'gps'; $('cpC').value = lat.toFixed(7) + ', ' + lon.toFixed(7);
+      $('cpGpsTxt').textContent = `Listo: ${lect.length} lecturas, precisión ≈ ±${prec} m`;
+    }, 500);
+  };
+  $('cpC').oninput = () => { origen = 'mapa'; prec = null; };
+  $('cpOk').onclick = async () => {
+    const c = parseCoord($('cpC').value);
+    if (!c) { toast('Pegá las coordenadas como "-34.60123, -58.86012" (tienen que caer cerca del country).', true); return; }
+    const lejos = Math.hypot(...((q => [q.x - x, q.y - y])(aPlano(c.lat, c.lon)))) * M_POR_UNIDAD;
+    if (lejos > 150 && !confirm2()) return;
+    try {
+      busy('Guardando…'); const r = await api('/calibracion/puntos', {method: 'POST', json: {x, y, lat: c.lat, lon: c.lon, origen, prec, nota: $('cpN').value.trim()}});
+      busy(''); CALIB.puntos = r.puntos; CALIB.res = null; cerrarModal(); pintarCalib(); barraCalib(); toast('Punto guardado. Cargá varios y tocá Calcular.');
+    } catch (e) { busy(''); error(e); }
+    function confirm2() { toast(`Ojo: esa coordenada cae a ${Math.round(lejos)} m de donde tocaste. Revisá que sea el mismo lugar; si está bien, tocá Guardar otra vez.`, true); if ($('cpOk').dataset.ok) return true; $('cpOk').dataset.ok = 1; return false; }
+  };
+  setTimeout(() => $('cpC') && $('cpC').focus(), 50);
+}
+function fichaPuntoCalib(id) {
+  const k = CALIB.puntos.findIndex(p => p.id === id), p = CALIB.puntos[k]; if (!p) return;
+  const d = ((CALIB.res && CALIB.res.detalle) || []).find(x => x.id === id), q = aPlano(p.lat, p.lon);
+  const hoyErr = Math.round(Math.hypot(q.x - p.x, q.y - p.y) * M_POR_UNIDAD);
+  modal('Punto de control ' + (k + 1), `
+    <dl class="kv">
+      <dt>Coordenadas</dt><dd>${p.lat.toFixed(6)}, ${p.lon.toFixed(6)} · <a href="https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lon}" target="_blank" rel="noopener">ver en Google Maps</a></dd>
+      <dt>Origen</dt><dd>${p.origen === 'gps' ? 'GPS promediado' + (p.prec_m ? ' (±' + p.prec_m + ' m)' : '') : 'Google Maps / imagen satelital'}</dd>
+      ${p.nota ? `<dt>Referencia</dt><dd>${esc(p.nota)}</dd>` : ''}
+      <dt>Error hoy</dt><dd>${hoyErr} m con la calibración en uso</dd>
+      ${d ? `<dt>Error del ajuste</dt><dd>${d.error_afin_m} m${d.error_m != null ? ` · sin este punto: ${d.error_m} m` : ''}</dd>` : ''}
+      <dt>Cargado</dt><dd>${fechaHora(p.creado)} · ${esc(p.usuario)}</dd>
+    </dl>
+    ${d && d.error_m != null && d.error_m > 8 ? '<p class="gpsinfo lejos">Este punto no coincide con los demás: probablemente se marcó en otro lugar del plano o la coordenada está mal. Revisalo o desactivalo.</p>' : ''}
+  `, `<button type="button" class="danger" id="cpDel">Borrar</button><button type="button" id="cpAct">${p.activo ? 'Desactivar' : 'Activar'}</button><button type="button" class="pri" id="cpX3">Cerrar</button>`);
+  const mod = async body => { try { busy('Guardando…'); const r = await api('/calibracion/puntos/' + id, {method: 'PUT', json: body}); busy(''); CALIB.puntos = r.puntos; CALIB.res = null; cerrarModal(); pintarCalib(); barraCalib(); } catch (e) { busy(''); error(e); } };
+  $('cpX3').onclick = cerrarModal;
+  $('cpAct').onclick = () => mod({activo: !p.activo});
+  $('cpDel').onclick = () => mod({borrar: true});
+}
+$('bCal').onclick = calibrar;
+
 /* ───────── reportes (consulta, inspector y superiores) ───────── */
 const REP = {desde: '', hasta: '', sector: '', estado: '', rubro: ''};
 function qsRep() {
@@ -1608,6 +1766,7 @@ async function cargar() {
   S.cat = {}; d.catalogo.forEach(c => { c.activo = !!c.activo; S.cat[c.codigo] = c; });
   S.usuarios = {}; d.usuarios.forEach(u => { S.usuarios[u.id] = u; });
   S.marcas = {}; (d.marcas || []).forEach(m => { S.marcas[m.n] = m; });
+  usarCalibracion(d.calibracion);
   S.pend = {}; (d.pendientes_visita || []).forEach(p => { const i = ufLot[p.ufs[0]]; if (i != null && !S.pend[i]) S.pend[i] = p; });
   GRUPOS = {}; d.grupos.forEach(g => { GRUPOS[g.uf] = String(g.ufs).split(',').map(Number); });
   const b = $('banner');
@@ -1637,6 +1796,7 @@ async function iniciar() {
   $('bLapiz').hidden = !puede('inspector');
   $('bItin').hidden = !puede('inspector');
   $('bRed').hidden = !puede('admin');
+  $('bCal').hidden = !puede('admin');
   applyVB();
   await cargar().catch(error);
   abrirEventos();
