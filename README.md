@@ -238,14 +238,14 @@ El botón **Recorrido** lo usan el inspector, el supervisor y el admin.
    - Se puede **saltear**, **marcar como hecha** o **recalcular lo que falta** desde la ubicación actual.
    - El recorrido queda guardado: planificado contra realizado. El supervisor y el admin lo pueden consultar.
 
-**Llegada por GPS:** con un recorrido activo, la app sigue la ubicación del celular y mantiene la pantalla encendida. Si el navegador lo permite, la pantalla no se apaga; si el celular se bloquea, el navegador deja de seguir el GPS. Cuando el celular está a menos de 40 m de una parada durante 20 segundos (con GPS de ±50 m o mejor), vibra y muestra **"Llegaste a la U.F. …"** con tres opciones:
-- **Cargar visita:** abre el formulario de la visita.
-- **Sin novedad:** guarda una visita sin faltas con la ubicación GPS.
+**Reporte manual de cada parada:** cada parada se reporta a mano, desde la barra (para la próxima) o desde **Lista**:
+- **Cargar visita:** abre el formulario, con faltas y fotos.
+- **Sin novedad:** guarda una visita sin faltas.
 - **Saltear.**
 
-La llegada queda registrada (hora y distancia) como constancia en la lista del recorrido. Llegar no cumple la parada: se cumple con la visita.
+El GPS no marca nada automáticamente; solo se usa para "mi ubicación" (◎) y para guardar la ubicación de la visita.
 
-**Pendiente de visita:** al **terminar el recorrido**, las paradas que no se visitaron quedan como "no visitadas". En el plano esos lotes se marcan con borde violeta punteado. Además:
+**Pendiente de visita:** al **terminar el recorrido**, las paradas que no se reportaron quedan como "no visitadas". La U.F. muestra "Pendiente de visita · estaba en el itinerario planificado el dd/mm/aaaa". En el plano esos lotes se marcan con borde violeta punteado. Además:
 - la leyenda muestra **Pendiente de visita** con su cantidad;
 - la ficha de la U.F. avisa desde cuándo está pendiente;
 - el próximo **Armar recorrido** arranca con esas U.F. ya elegidas.
