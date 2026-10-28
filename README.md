@@ -243,6 +243,12 @@ El botón **Recorrido** lo usan el inspector, el supervisor y el admin.
 - **Camino entre paradas:** lo arma Google y puede no conocer todas las calles internas ni las manos del country.
 - **Datos que salen:** solo coordenadas, sin números de U.F. ni nombres.
 
+**Optimizar**, en la barra de armado:
+- **Tiempo y combustible** (por defecto): minimiza el tiempo de manejo. A cada esquina, giro y vuelta en U le suma unos segundos (frenar y volver a acelerar es lo que más gasta en trayectos cortos), así que prefiere caminos más derechos.
+- **Solo distancia:** los metros, sin tener en cuenta las maniobras.
+
+La propuesta muestra km, minutos y una estimación de nafta: 9 L/100 km urbano, más un extra por cada parada y maniobra.
+
 Cómo se calcula: cada parada se ancla al punto más cercano de la red de calles. Dijkstra (NetworkX) da la distancia real por calle entre paradas. El mejor orden se calcula exacto (Held-Karp) hasta 11 paradas libres; con más, se usa vecino más cercano + 2-opt.
 
 ## Red de calles (solo admin)

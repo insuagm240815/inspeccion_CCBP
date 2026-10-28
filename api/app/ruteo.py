@@ -8,7 +8,14 @@
 
 Modos: 'vehiculo' usa calles y bordes respetando la mano; 'pie' suma los pasos peatonales y
 camina en ambos sentidos. Los tramos 'cerrado' no se usan nunca.
+
+Criterio 'tiempo' (por defecto): minimiza el tiempo de manejo, que es lo que más se relaciona con el
+consumo. Además de la distancia, cada giro, cada esquina y cada vuelta en U suman segundos (frenar y
+volver a acelerar es lo que más combustible gasta en un recorrido urbano corto), así que prefiere
+caminos más derechos aunque sean apenas más largos. Criterio 'distancia': solo los metros.
 """
+import heapq
+import itertools
 import json
 import math
 import threading
@@ -21,6 +28,11 @@ VELOCIDAD_KMH = {'vehiculo': 20.0, 'pie': 4.5}
 TIPOS = {'vehiculo': ('calle', 'borde'), 'pie': ('calle', 'borde', 'peatonal')}
 EXACTO_HASTA = 11
 LEJOS_M = 60
+# segundos que suma cada maniobra (vehículo / a pie)
+PENAL = {'vehiculo': {'esquina': 2, 'giro': 5, 'cerrado': 8, 'u': 20}, 'pie': {'esquina': 0, 'giro': 1, 'cerrado': 2, 'u': 4}}
+LITROS_100KM = 9.0          # consumo urbano típico de un auto chico, para la estimación
+LITROS_POR_U = 0.004        # una vuelta en U o detenerse y volver a arrancar
+LITROS_POR_GIRO = 0.0015
 
 _lock = threading.Lock()
 _cache = {'ver': None, 'red': None}
@@ -181,42 +193,155 @@ def _orden(D, n, fijas, libres, volver):
     return seq + orden + ([0] if volver else [])
 
 
-def planificar(c, filas, modo, inicio, paradas, volver):
+def _rumbo(pts, final):
+    """Rumbo (radianes) al salir (final=False) o al llegar (final=True) por una polilínea."""
+    seq = pts[::-1] if final else pts
+    a, b = seq[0], None
+    for q in seq[1:]:                       # se mira ~12 m hacia adelante: los ejes del plano se curvan al llegar a cada esquina
+        b = q
+        if math.hypot(q[0] - a[0], q[1] - a[1]) >= 30:
+            break
+    if b is None or math.hypot(b[0] - a[0], b[1] - a[1]) < 0.5:
+        return None
+    ang = math.atan2(b[1] - a[1], b[0] - a[0])
+    return ang + math.pi if final else ang
+
+
+def _maniobra(rin, rout, nodo_grado):
+    """Clasifica el paso por un nodo según el ángulo entre llegada y salida."""
+    if rin is None or rout is None:
+        return None
+    d = abs((rout - rin + math.pi) % (2 * math.pi) - math.pi)
+    g = math.degrees(d)
+    if g >= 150:
+        return 'u'
+    if g >= 100:
+        return 'cerrado'
+    if g >= 35:
+        return 'giro'
+    return 'esquina' if nodo_grado >= 3 else None
+
+
+def _caminos(G, red, modo, n, criterio):
+    """Dijkstra con giros: el estado es (nodo, arista de llegada), así cada giro y cada vuelta en U tienen su costo.
+    Devuelve, para cada par de paradas: costo, metros, segundos, lista de aristas, giros y vueltas en U."""
+    vel = VELOCIDAD_KMH[modo] / 3.6
+    pen = PENAL[modo]
+    grado = {u: len(set(G.successors(u)) | set(G.predecessors(u))) for u in G}
+    for u, v, k, d in G.edges(keys=True, data=True):
+        tid, s1, s2 = d['via']
+        pts = _sub(red['tramos'][tid], s1, s2)
+        d['sal'], d['lle'] = _rumbo(pts, False), _rumbo(pts, True)
+    R = {}
+    for i in range(n):
+        src = ('p', i)
+        cnt = itertools.count()
+        heap = [(0.0, next(cnt), src, None)]
+        best = {(src, None): (0.0, 0.0, 0.0, None, None, 0, 0)}     # costo, metros, seg, previo, arista, giros, u
+        listos = {}
+        while heap and len(listos) < n:
+            c0, _, u, ein = heapq.heappop(heap)
+            st = (u, ein)
+            if best[st][0] < c0 - 1e-9:
+                continue
+            if u[0] == 'p' and u[1] not in listos:
+                listos[u[1]] = st
+            _, m0, s0, _, _, g0, u0 = best[st]
+            rin = G.edges[ein]['lle'] if ein else None
+            for _, v, k, d in G.out_edges(u, keys=True, data=True):
+                man = _maniobra(rin, d['sal'], grado[u]) if ein else None
+                extra = pen[man] if man else 0
+                seg = d['w'] / vel + extra
+                costo = c0 + (seg if criterio == 'tiempo' else d['w'])
+                e = (u, v, k)
+                if (v, e) not in best or costo < best[(v, e)][0] - 1e-9:
+                    best[(v, e)] = (costo, m0 + d['w'], s0 + seg, st, e, g0 + (man in ('giro', 'cerrado')), u0 + (man == 'u'))
+                    heapq.heappush(heap, (costo, next(cnt), v, e))
+        for j, st in listos.items():
+            costo, m, s, _, _, gi, uu = best[st]
+            aristas, x = [], st
+            while best[x][3] is not None:
+                aristas.append(best[x][4])
+                x = best[x][3]
+            R[i, j] = dict(costo=costo, m=m, s=s, aristas=aristas[::-1], giros=gi, u=uu)
+    return R
+
+
+def _orden_mejorado(D, fijas, libres, volver):
+    """Para muchas paradas: varias soluciones de arranque + 2-opt + reubicación de paradas (or-opt)."""
+    if len(libres) <= EXACTO_HASTA:
+        return _orden(D, None, fijas, libres, volver)
+    seq0 = [0] + fijas
+    u0 = seq0[-1]
+    fin = (lambda j: D[j][0]) if volver else (lambda j: 0.0)
+
+    def costo(o):
+        return D[u0][o[0]] + sum(D[a][b] for a, b in zip(o, o[1:])) + fin(o[-1])
+
+    def mejorar(o):
+        mejor = True
+        while mejor:
+            mejor = False
+            for i in range(len(o) - 1):                      # 2-opt
+                for k in range(i + 1, len(o)):
+                    p = o[:i] + o[i:k + 1][::-1] + o[k + 1:]
+                    if costo(p) < costo(o) - 1e-6:
+                        o, mejor = p, True
+            for largo in (1, 2, 3):                          # or-opt: mover tramos de 1 a 3 paradas
+                for i in range(len(o) - largo + 1):
+                    blo, resto = o[i:i + largo], o[:i] + o[i + largo:]
+                    for j in range(len(resto) + 1):
+                        p = resto[:j] + blo + resto[j:]
+                        if p != o and costo(p) < costo(o) - 1e-6:
+                            o, mejor = p, True
+                            break
+        return o
+    mejores = []
+    for primero in sorted(libres, key=lambda v: D[u0][v])[:6]:   # arranques distintos: vecino más cercano desde cada uno
+        o, resto, u = [primero], set(libres) - {primero}, primero
+        while resto:
+            v = min(resto, key=lambda v: D[u][v])
+            o.append(v)
+            resto.remove(v)
+            u = v
+        mejores.append(mejorar(o))
+    o = min(mejores, key=costo)
+    return seq0 + o + ([0] if volver else [])
+
+
+def planificar(c, filas, modo, inicio, paradas, volver, criterio='tiempo'):
     """inicio = {x, y}; paradas = [{tipo, ref, x, y, fijada}]. Devuelve el recorrido ordenado con su trazo."""
     if modo not in TIPOS:
         raise SinRuta('Modo no válido.')
+    criterio = criterio if criterio in ('tiempo', 'distancia') else 'tiempo'
     red = _cargar(c, filas)
     puntos = [inicio] + paradas
     anclas = {i: _anclar(red, modo, float(p['x']), float(p['y'])) for i, p in enumerate(puntos)}
     G = _grafo(red, modo, anclas)
     n = len(puntos)
-    D, caminos = [[math.inf] * n for _ in range(n)], {}
-    for i in range(n):
-        L, P = nx.single_source_dijkstra(G, ('p', i), weight='w')
-        for j in range(n):
-            if ('p', j) in L:
-                D[i][j] = L[('p', j)]
-                caminos[i, j] = P[('p', j)]
+    R = _caminos(G, red, modo, n, criterio)
+    D = [[R[i, j]['costo'] if (i, j) in R else math.inf for j in range(n)] for i in range(n)]
     malos = [paradas[j - 1]['ref'] for j in range(1, n) if D[0][j] == math.inf or (volver and D[j][0] == math.inf)]
     if malos:
         raise SinRuta(f"No hay camino {'en vehículo ' if modo == 'vehiculo' else 'a pie '}hasta: {', '.join(malos)}. "
                       "Revisá la red de calles o probá el otro modo.")
     fijas = [i for i in range(1, n) if paradas[i - 1].get('fijada')]
     libres = [i for i in range(1, n) if not paradas[i - 1].get('fijada')]
-    seq = _orden(D, n, fijas, libres, volver)
+    seq = _orden_mejorado(D, fijas, libres, volver)
     tramos_usados, piernas = set(), []
     for a, b in zip(seq, seq[1:]):
+        r = R[a, b]
         pts = [[anclas[a]['x'], anclas[a]['y']]]
-        nodos = caminos[a, b]
-        for u, v in zip(nodos, nodos[1:]):
-            e = min(G[u][v].values(), key=lambda d: d['w'])
-            tid, s1, s2 = e['via']
+        for e in r['aristas']:
+            tid, s1, s2 = G.edges[e]['via']
             tramos_usados.add(tid)
             pts += _sub(red['tramos'][tid], s1, s2)[1:]
-        km = D[a][b] / 1000
-        piernas.append({'desde': a, 'hasta': b, 'km': round(km, 3), 'min': round(km / VELOCIDAD_KMH[modo] * 60, 1),
-                        'geo': [[round(x, 1), round(y, 1)] for x, y in pts]})
+        piernas.append({'desde': a, 'hasta': b, 'km': round(r['m'] / 1000, 3), 'min': round(r['s'] / 60, 1),
+                        'giros': r['giros'], 'vueltas_u': r['u'], 'geo': [[round(x, 1), round(y, 1)] for x, y in pts]})
     km = sum(p['km'] for p in piernas)
+    minutos = sum(p['min'] for p in piernas)
+    giros, vueltas = sum(p['giros'] for p in piernas), sum(p['vueltas_u'] for p in piernas)
+    litros = (km * LITROS_100KM / 100 + vueltas * LITROS_POR_U + giros * LITROS_POR_GIRO + len(piernas) * LITROS_POR_U) if modo == 'vehiculo' else None
     avisos = []
     sin_rev = [t for t in tramos_usados if red['tramos'][t]['tipo'] == 'borde' and not red['tramos'][t]['revisado']]
     if sin_rev:
@@ -226,5 +351,6 @@ def planificar(c, filas, modo, inicio, paradas, volver):
             avisos.append(f"{paradas[i - 1]['ref']} queda a {round(an['dist_m'])} m de la calle más cercana.")
     orden = [{**paradas[i - 1], 'idx': i - 1} for i in seq if i]
     return {'modo': modo, 'volver': volver, 'secuencia': seq, 'paradas': orden,
-            'piernas': piernas, 'km': round(km, 2), 'minutos': round(km / VELOCIDAD_KMH[modo] * 60),
+            'piernas': piernas, 'km': round(km, 2), 'minutos': round(minutos), 'criterio': criterio,
+            'giros': giros, 'vueltas_u': vueltas, 'litros': round(litros, 2) if litros is not None else None,
             'avisos': avisos, 'inicio': {**inicio, 'xs': anclas[0]['x'], 'ys': anclas[0]['y']}}

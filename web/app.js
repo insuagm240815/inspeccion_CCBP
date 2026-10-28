@@ -1003,7 +1003,7 @@ function importarBase(res, archivo) {
 let MAPA_MODO = null;          // función (evento, elemento tocado) mientras se elige en el plano o se edita la red
 let ELEG = null;               // Set de índices de lote elegidos desde el plano
 let ITIN = null, PREVIA = null, RED = null;
-const PLAN = {modo: 'vehiculo', inicio: 'fijo', volver: false, lotes: new Set()};
+const PLAN = {modo: 'vehiculo', inicio: 'fijo', volver: false, criterio: 'tiempo', lotes: new Set()};
 const VEL = {vehiculo: 20, pie: 4.5};
 const kmTxt = km => km < 1 ? Math.round(km * 1000) + ' m' : (Math.round(km * 10) / 10).toString().replace('.', ',') + ' km';
 const minTxt = m => m < 60 ? Math.round(m) + ' min' : Math.floor(m / 60) + ' h ' + Math.round(m % 60) + ' min';
@@ -1035,18 +1035,20 @@ function barraPlan() {
     <div class="row">
       <span class="seg"><button type="button" data-modo="vehiculo" aria-pressed="${PLAN.modo === 'vehiculo'}">🚗 Vehículo</button><button type="button" data-modo="pie" aria-pressed="${PLAN.modo === 'pie'}">🚶 A pie</button></span>
       <select id="itIni" aria-label="Salida"><option value="fijo">Salida: ${esc((RED && RED.inicio.nombre) || 'punto fijo')}</option><option value="gps" ${PLAN.inicio === 'gps' ? 'selected' : ''}>Salida: mi ubicación${gps ? '' : ' (GPS)'}</option></select>
+      <select id="itCrit" aria-label="Optimizar" title="Tiempo y combustible: además de los metros, evita giros, esquinas y vueltas en U (frenar y acelerar es lo que más gasta)"><option value="tiempo">Optimizar: tiempo y combustible</option><option value="distancia" ${PLAN.criterio === 'distancia' ? 'selected' : ''}>Optimizar: solo distancia</option></select>
       <label class="row chk"><input type="checkbox" id="itVolver" ${PLAN.volver ? 'checked' : ''}> Volver al final</label>
     </div>
     <div class="row"><button type="button" id="itX">Cancelar</button>${n ? '<button type="button" id="itLimpiar">Limpiar</button>' : ''}<button type="button" class="pri" id="itCalc" ${n ? '' : 'disabled'}>Calcular recorrido</button></div>`;
   b.querySelectorAll('[data-modo]').forEach(x => { x.onclick = () => { PLAN.modo = x.dataset.modo; barraPlan(); }; });
   $('itIni').onchange = e => { PLAN.inicio = e.target.value; if (PLAN.inicio === 'gps') iniciarGps(false, true); };
   $('itVolver').onchange = e => { PLAN.volver = e.target.checked; };
+  $('itCrit').onchange = e => { PLAN.criterio = e.target.value; };
   $('itX').onclick = () => { salirModoMapa(); };
   if ($('itLimpiar')) $('itLimpiar').onclick = () => { ELEG.clear(); render(); barraPlan(); };
   $('itCalc').onclick = calcularRecorrido;
 }
 function pedidoRecorrido() {
-  const d = {modo: PLAN.modo, volver: PLAN.volver, paradas: [...PLAN.lotes].map(i => ({tipo: 'uf', ref: refUF(i), x: LOTS[i].c[0], y: LOTS[i].c[1]}))};
+  const d = {modo: PLAN.modo, volver: PLAN.volver, criterio: PLAN.criterio, paradas: [...PLAN.lotes].map(i => ({tipo: 'uf', ref: refUF(i), x: LOTS[i].c[0], y: LOTS[i].c[1]}))};
   if (PLAN.inicio === 'gps') {
     const g = posVigente(); if (!g) throw new Error('Todavía no hay señal GPS. Esperá unos segundos o elegí la salida fija.');
     d.inicio = {x: g.x, y: g.y, nombre: 'Mi ubicación'};
@@ -1107,7 +1109,7 @@ function barraRuta() {
   if (MAPA_MODO) return;
   if (PREVIA) {
     b.hidden = false;
-    b.innerHTML = `<div class="row"><b>Recorrido propuesto</b><span class="note">${PREVIA.paradas.length} paradas · ${kmTxt(PREVIA.km)} · ${minTxt(PREVIA.minutos)} ${PREVIA.modo === 'pie' ? 'a pie' : 'en vehículo'}</span></div>
+    b.innerHTML = `<div class="row"><b>Recorrido propuesto</b><span class="note">${PREVIA.paradas.length} paradas · ${kmTxt(PREVIA.km)} · ${minTxt(PREVIA.minutos)} ${PREVIA.modo === 'pie' ? 'a pie' : 'en vehículo'}${PREVIA.litros != null ? ' · ≈ ' + String(PREVIA.litros).replace('.', ',') + ' L de nafta' : ''}${PREVIA.vueltas_u ? ' · ' + PREVIA.vueltas_u + ' vuelta' + (PREVIA.vueltas_u > 1 ? 's' : '') + ' en U' : ''}</span></div>
       ${PREVIA.avisos.length ? `<p class="gpsinfo lejos">${PREVIA.avisos.map(esc).join('<br>')}</p>` : ''}
       <div class="row"><button type="button" id="itLista">Ver orden</button><button type="button" id="itGmaps">Google Maps</button><button type="button" id="itCambiar">Cambiar paradas</button><button type="button" id="itDescartar">Descartar</button><button type="button" class="pri" id="itGuardar">Empezar recorrido</button></div>`;
     $('itLista').onclick = () => listaRecorrido(PREVIA.paradas, PREVIA.piernas, false);

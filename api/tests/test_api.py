@@ -461,6 +461,9 @@ def test_red_y_recorrido(usuarios):
     j = r.json()
     assert len(j["paradas"]) == 4 and len(j["piernas"]) == 4 and j["km"] > 0
     assert {p["ref"] for p in j["paradas"]} == {p["ref"] for p in par}
+    assert j["criterio"] == "tiempo" and j["litros"] > 0 and j["giros"] >= 0 and j["minutos"] > 0
+    dist = ins.post("/api/itinerarios/calcular", json={"modo": "vehiculo", "paradas": par, "criterio": "distancia"}, headers=H).json()
+    assert dist["criterio"] == "distancia" and dist["km"] <= j["km"] + 1e-6         # por distancia nunca es más largo
     # el orden óptimo no es más largo que recorrerlas en el orden cargado
     fijo = ins.post("/api/itinerarios/calcular", json={"modo": "vehiculo", "paradas": [dict(p, fijada=True) for p in par]}, headers=H).json()
     assert [p["ref"] for p in fijo["paradas"]] == [p["ref"] for p in par] and j["km"] <= fijo["km"] + 1e-6

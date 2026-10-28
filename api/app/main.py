@@ -638,12 +638,12 @@ def _pedido_ruta(c, d):
         paradas.append({"tipo": tipo, "ref": ref, "x": px, "y": py, "fijada": bool(p.get("fijada"))})
     if not paradas:
         raise HTTPException(400, "Elegí al menos una parada.")
-    return modo, inicio, paradas, bool(d.get("volver"))
+    return modo, inicio, paradas, bool(d.get("volver")), d.get("criterio") if d.get("criterio") in ("tiempo", "distancia") else "tiempo"
 
 
-def _calcular(c, modo, inicio, paradas, volver):
+def _calcular(c, modo, inicio, paradas, volver, criterio="tiempo"):
     try:
-        return RUT.planificar(c, filas, modo, inicio, paradas, volver)
+        return RUT.planificar(c, filas, modo, inicio, paradas, volver, criterio)
     except RUT.SinRuta as e:
         raise HTTPException(400, str(e))
 
@@ -677,8 +677,8 @@ async def api_itin_guardar(req: Request):
 
     def tx():
         with conexion() as c:
-            modo, inicio, paradas, volver = _pedido_ruta(c, d)
-            ruta = _calcular(c, modo, inicio, paradas, volver)
+            modo, inicio, paradas, volver, criterio = _pedido_ruta(c, d)
+            ruta = _calcular(c, modo, inicio, paradas, volver, criterio)
             ejecutar(c, """UPDATE itinerario SET estado='reemplazado', cerrado=NOW()
                            WHERE id_usuario=%s AND fecha=%s AND estado='activo'""", (u["id_usuario"], hoy()))
             ejecutar(c, """INSERT INTO itinerario (fecha, id_usuario, modo, inicio, volver, km_plan, minutos_plan, geometria)
