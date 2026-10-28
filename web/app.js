@@ -487,12 +487,13 @@ function fichaFalta(n) {
     </dl>
     ${fotosDe(n)}
     <div class="list"><h3>Historial</h3><div class="timeline">${hs.map(x => `<div><span class="d">${fmt(x.fecha)} · ${quien(x.autor)}</span><br>${esc(x.cambio)}${x.nota ? ' — ' + esc(x.nota) : ''}</div>`).join('') || '<p class="empty">Sin movimientos.</p>'}</div></div>
-  `, `<button type="button" class="wa" id="aWa">WhatsApp</button><a class="btn" id="aPdf" href="/api/faltas/${encodeURIComponent(n)}/pdf" download title="Ficha de la falta en PDF, con las fotos adjuntas">Ficha PDF</a>${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${puede('inspector') && abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}${puede('inspector') ? '<button type="button" class="pri" id="aEstado">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta(h) ? '<button type="button" class="pri" id="aEstado">Gestionar</button>' : '')}`);
+  `, `<button type="button" class="wa" id="aWa">WhatsApp</button><button type="button" class="teams" id="aTeams">Teams</button><a class="btn" id="aPdf" href="/api/faltas/${encodeURIComponent(n)}/pdf" download title="Ficha de la falta en PDF, con las fotos adjuntas">Ficha PDF</a>${puede('supervisor') ? '<button type="button" class="danger" id="aBorrar">Borrar</button>' : ''}${puede('inspector') && abierta(h) ? '<button type="button" id="aRepro">Reprogramar</button>' : ''}${puede('inspector') ? '<button type="button" class="pri" id="aEstado">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta(h) ? '<button type="button" class="pri" id="aEstado">Gestionar</button>' : '')}`);
   if ($('aEstado')) $('aEstado').onclick = () => formEstado(n);
   if ($('aRepro')) $('aRepro').onclick = () => formRepro(n);
   if ($('aBorrar')) $('aBorrar').onclick = () => formBorrar(n);
   const prep = prepararFotos(n);   // se bajan antes del toque: compartir exige hacerlo enseguida del clic
   $('aWa').onclick = () => compartirWa(textoFalta(h), n, prep, 'Falta ' + n);
+  $('aTeams').onclick = () => compartirTeams(textoFalta(h), `Falta ${n} · U.F. ${grupoUF(h.uf).join('/')} · ${h.codigo} ${catTxt(h.codigo)} · ${h.estado}`, 'falta=' + n, n, prep, 'Falta ' + n);
   return m;
 }
 function textoFalta(h) {
@@ -839,7 +840,7 @@ function fichaMarca(n, centrar_) {
   const abierta_ = M_CERR.indexOf(m.estado) < 0, hs = S.hist.filter(x => x.reg === n);
   const acciones = [
     puede('supervisor') ? '<button type="button" class="danger" id="kBorrar">Borrar</button>' : '',
-    '<button type="button" class="wa" id="kWa">Enviar por WhatsApp</button>',
+    '<button type="button" class="wa" id="kWa">WhatsApp</button><button type="button" class="teams" id="kTeams">Teams</button>',
     puede('inspector') ? '<button type="button" id="kEdit">Editar</button>' : '',
     puede('inspector') ? '<button type="button" id="kRedib">Redibujar</button>' : '',
     puede('inspector') ? '<button type="button" class="pri" id="kEst">Cambiar estado</button>' : (YO && YO.rol === 'consulta' && abierta_ ? '<button type="button" class="pri" id="kEst">Gestionar</button>' : ''),
@@ -859,6 +860,7 @@ function fichaMarca(n, centrar_) {
   `, acciones);
   const prep = prepararFotos(n);   // se bajan antes del toque: compartir exige hacerlo enseguida del clic
   $('kWa').onclick = () => compartirMarca(n, prep);
+  $('kTeams').onclick = () => compartirTeams(textoMarca(m), `Novedad ${n} · ${m.lugar} · ${m.tipo} · ${m.estado}`, 'marca=' + n, n, prep, 'Novedad ' + n);
   $('kVer').onclick = () => { cerrarModal(); const [x, y] = centro(m.geo); seguir = false; marcarGps(); centrar(x, y, 400); };
   if ($('kEst')) $('kEst').onclick = () => formEstadoMarca(n);
   if ($('kEdit')) $('kEdit').onclick = () => editarMarca(n);
@@ -887,6 +889,27 @@ async function compartirMarca(n, prep) {
   const m = S.marcas[n]; if (!m) return;
   return compartirWa(textoMarca(m), n, prep, 'Novedad ' + n);
 }
+/* Teams: en el celular, el menú de compartir del sistema (se elige Teams; van texto y fotos).
+   En la PC, el lanzador "Share to Teams": abre una ventana para elegir chat o canal, con un texto corto (Teams admite
+   hasta 200 caracteres) y el enlace a la ficha en la app (pide iniciar sesión, así los datos no quedan expuestos). */
+function enlaceApp(hash) { return location.origin + location.pathname + '#' + hash; }
+async function compartirTeams(text, corto, hash, n, prep, titulo) {
+  if (navigator.share) return compartirWa(text + '\n' + enlaceApp(hash), n, prep, titulo);
+  const msg = corto.length > 195 ? corto.slice(0, 192) + '…' : corto;
+  const url = 'https://teams.microsoft.com/share?href=' + encodeURIComponent(enlaceApp(hash)) + '&msgText=' + encodeURIComponent(msg) + '&preview=false';
+  window.open(url, 'ms-teams-share', 'width=720,height=640');
+  if (S.fotos.some(f => f.reg === n)) toast('Desde la PC Teams no deja adjuntar las fotos por enlace: el mensaje lleva el link a la ficha, donde están las fotos (o adjuntá la Ficha PDF).');
+}
+/* enlaces directos: …/#falta=F-0124 o …/#marca=M-0003 abren esa ficha (después de iniciar sesión) */
+function abrirDesdeEnlace() {
+  const m = /^#(falta|marca)=([A-Z]-\d{1,6})$/i.exec(location.hash || ''); if (!m) return;
+  const n = m[2].toUpperCase();
+  if (m[1].toLowerCase() === 'falta' && S.hallazgos[n]) { const i = ufLot[S.hallazgos[n].uf]; if (i != null) { seleccionar(i); irA(i); } fichaFalta(n); }
+  else if (m[1].toLowerCase() === 'marca' && S.marcas[n]) fichaMarca(n, true);
+  else toast('No encontré ' + n + '. Puede haber sido borrada.', true);
+  history.replaceState(null, '', location.pathname + location.search);
+}
+window.addEventListener('hashchange', () => { if (YO) abrirDesdeEnlace(); });
 /* WhatsApp: en el celular, menú de compartir del sistema (texto + hasta 4 fotos); en la PC, WhatsApp Web solo con el texto */
 async function compartirWa(text, n, prep, titulo) {
   const abrirWa = () => window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
@@ -1781,6 +1804,7 @@ async function iniciar() {
   $('bCal').hidden = !puede('admin');
   applyVB();
   await cargar().catch(error);
+  abrirDesdeEnlace();
   abrirEventos();
 }
 applyVB(); render(); iniciar();

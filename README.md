@@ -214,6 +214,15 @@ La ficha de cada falta tiene el botón **WhatsApp**:
 - **En el celular:** se abre el menú de compartir del teléfono. Se elige WhatsApp y el contacto o grupo, y se envían la descripción de la falta y hasta 4 fotos. La descripción incluye U.F., sector, código y tipo, norma, estado, fechas, reiterancia, observación y un enlace de Google Maps al lote.
 - **En la PC:** se abre WhatsApp Web solo con el texto, porque WhatsApp no permite adjuntar fotos por enlace.
 
+Al lado está el botón **Teams**. Las novedades de espacios comunes también tienen los dos botones:
+- **En el celular:** se abre el mismo menú de compartir: se elige Teams y se envían texto, fotos y el enlace a la ficha.
+- **En la PC:** se abre la ventana "Compartir en Teams" para elegir chat o canal. Lleva un texto corto, porque Teams admite hasta 200 caracteres, y el **enlace a la ficha** en la app.
+  - Ese enlace pide iniciar sesión.
+  - Teams no permite adjuntar fotos por enlace: están en la ficha o en la Ficha PDF.
+  - Funciona en Edge o Chrome con una cuenta de Microsoft 365 (no con invitados ni cuentas gratuitas).
+
+**Enlaces directos:** `https://…/#falta=F-0124` o `#marca=M-0003` abren esa ficha. Si no hay sesión, la abren después de iniciarla.
+
 Lo enviado incluye datos de una U.F. y su infracción: mandarlo solo a contactos o grupos de trabajo.
 
 ## Ficha de falta en PDF

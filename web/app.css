@@ -345,3 +345,5 @@ table.cat tr.imp-omitida td{opacity:.6}
 #map.editando .ruta-m{pointer-events:auto;cursor:pointer}
 .cp-vec{stroke:#D93A32;stroke-width:2.5;vector-effect:non-scaling-stroke;stroke-linecap:round;pointer-events:none}
 .cp-nuevo{fill:#111;stroke:#fff;stroke-width:2;vector-effect:non-scaling-stroke}
+button.teams{background:#5B5FC7;border-color:#5B5FC7;color:#fff}
+button.teams:hover{filter:brightness(1.08)}
