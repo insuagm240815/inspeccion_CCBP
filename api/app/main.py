@@ -168,6 +168,7 @@ def api_estado(req: Request):
                                     (SELECT COUNT(*) FROM hallazgo h WHERE h.codigo = c.codigo) usos
                                     FROM catalogo_falta c JOIN rubro r ON r.id_rubro = c.id_rubro"""),
             "usuarios": filas(c, "SELECT id_usuario id, nombre FROM usuario"),
+            "pendientes_visita": _pendientes_visita(c),
             "marcas": filas(c, """SELECT m.nro_marca n, m.fecha, m.tipo, m.descripcion, m.forma, m.geometria geo, m.lugar,
                                   s.nombre sector, m.estado, m.fecha_revision revision, m.fecha_cierre cierre, m.observacion obs,
                                   m.lat, m.lon, m.precision_m prec, m.ubicacion ubic, m.id_usuario autor FROM marca m LEFT JOIN sector s ON s.id_sector = m.id_sector"""),
@@ -798,6 +799,47 @@ async def api_itin_recalcular(iid: int, req: Request):
     return r
 
 
+@app.post("/api/itinerarios/{iid}/paradas/{orden}/llegada")
+async def api_itin_llegada(iid: int, orden: int, req: Request):
+    """El celular avisa que llegó a la parada (GPS dentro del radio durante unos segundos). Queda como constancia."""
+    u = await run_in_threadpool(exigir, req, "inspector", True)
+    d = await req.json()
+
+    def num(k, hi):
+        try:
+            v = int(float(d.get(k)))
+            return v if 0 <= v <= hi else None
+        except (TypeError, ValueError):
+            return None
+
+    def tx():
+        with conexion() as c:
+            _dueno(c, req, iid, u)
+            ejecutar(c, """UPDATE itinerario_parada SET llegada=NOW(), llegada_m=%s, llegada_prec=%s
+                           WHERE id_itinerario=%s AND orden=%s AND llegada IS NULL""", (num("dist_m", 5000), num("prec", 65000), iid, orden))
+            return _itinerario(c, iid)
+    return await run_in_threadpool(tx)
+
+
+def _pendientes_visita(c):
+    """Paradas que quedaron sin visitar (recorrido terminado, o activo de un día anterior) y que todavía nadie visitó."""
+    ps = filas(c, """SELECT p.ref, p.tipo, p.x, p.y, i.fecha, i.creado, u.nombre usuario FROM itinerario_parada p
+                     JOIN itinerario i ON i.id_itinerario=p.id_itinerario JOIN usuario u ON u.id_usuario=i.id_usuario
+                     WHERE p.tipo='uf' AND (p.estado='no_visitada' OR (p.estado='pendiente' AND i.estado='activo' AND i.fecha < %s))
+                     ORDER BY i.fecha DESC""", (hoy(),))
+    if not ps:
+        return []
+    ult = {r["nro_uf"]: r["t"] for r in filas(c, "SELECT nro_uf, MAX(creado) t FROM visita GROUP BY nro_uf")}
+    out, vistos = [], set()
+    for p in ps:
+        ufs = [int(x) for x in re.findall(r"\d+", p["ref"])]
+        if p["ref"] in vistos or any(ult.get(x) and ult[x] >= p["creado"] for x in ufs):
+            continue
+        vistos.add(p["ref"])
+        out.append({"ref": p["ref"], "ufs": ufs, "desde": p["fecha"], "usuario": p["usuario"]})
+    return out
+
+
 @app.post("/api/itinerarios/{iid}/terminar")
 async def api_itin_terminar(iid: int, req: Request):
     u = await run_in_threadpool(exigir, req, "inspector", True)
@@ -805,6 +847,14 @@ async def api_itin_terminar(iid: int, req: Request):
     def tx():
         with conexion() as c:
             _dueno(c, req, iid, u)
+            it = _itinerario(c, iid)
+            if it["estado"] == "activo":
+                for p in it["paradas"]:     # lo que se marcó solo por una visita queda como hecho; lo que falta, "no visitada"
+                    if p.get("auto"):
+                        ejecutar(c, "UPDATE itinerario_parada SET estado='hecha', marcada=%s WHERE id_itinerario=%s AND orden=%s",
+                                 (p["marcada"], iid, p["orden"]))
+                    elif p["estado"] == "pendiente":
+                        ejecutar(c, "UPDATE itinerario_parada SET estado='no_visitada' WHERE id_itinerario=%s AND orden=%s", (iid, p["orden"]))
             ejecutar(c, "UPDATE itinerario SET estado='terminado', cerrado=NOW() WHERE id_itinerario=%s AND estado='activo'", (iid,))
             return _itinerario(c, iid)
     return await run_in_threadpool(tx)

@@ -18,7 +18,7 @@ const CONTACTOS = ['Hablé con el residente','No había nadie','No había nadie,
 const NIVEL = {consulta: 0, inspector: 1, supervisor: 2, admin: 3};
 
 /* ───────── estado ───────── */
-const S = {visitas: {}, hallazgos: {}, hist: [], fotos: [], cat: {}, usuarios: {}, marcas: {}};
+const S = {visitas: {}, hallazgos: {}, hist: [], fotos: [], cat: {}, usuarios: {}, marcas: {}, pend: {}};   // pend: índice de lote → pendiente de visita
 let YO = null, SEL = -1, FSEC = '', FVIS = '';
 const ufLot = {};
 LOTS.forEach((l, i) => l.n.forEach(u => { ufLot[u] = i; }));
@@ -141,6 +141,7 @@ function textoTip(i) {
   } else {
     linea = '<span class="tip-s">Sin faltas</span>';
   }
+  if (S.pend[i]) linea += `<span class="tip-v">Pendiente de visita desde el ${fmt(String(S.pend[i].desde).slice(0, 10))}</span>`;
   return `<b>U.F. ${esc(ufs.join(' / '))}</b><span class="tip-s">Sector ${esc(sectorDe(ufs[0]))}</span>${linea}`;
 }
 function moverTip(e) {
@@ -236,6 +237,7 @@ function iniciarGps(centrarAlLlegar, sinSeguir) {
     if (seguir) centrar(q.x, q.y, primera ? 600 : vb.w);
     primera = false; marcarGps();
     if (DIB) gpsDibujo();
+    if (ITIN) vigilarLlegada();
   }, e => {
     // Sin permiso: se apaga. Sin señal o demora (pasa bajo árboles o techos): se sigue escuchando y solo se avisa si nunca hubo posición.
     if (e.code === 1) {
@@ -286,9 +288,10 @@ function render() {
     paths.forEach((p, i) => {
       const st = estadoLote(i);
       if (st && (!FSEC || sectorDe(LOTS[i].n[0]) === FSEC)) cnt[st]++;
-      p.setAttribute('class', 'lot' + (st ? ' st-' + st : '') + (pasaFiltro(i, st) ? '' : ' dim') + (i === SEL ? ' sel' : '') + (ELEG && ELEG.has(i) ? ' it-sel' : ''));
+      p.setAttribute('class', 'lot' + (st ? ' st-' + st : '') + (pasaFiltro(i, st) ? '' : ' dim') + (i === SEL ? ' sel' : '') + (ELEG && ELEG.has(i) ? ' it-sel' : '') + (S.pend[i] ? ' pend-vis' : ''));
     });
     Object.keys(cnt).forEach(k => { $('lg-' + k).textContent = cnt[k]; });   // lotes en cada estado (del sector filtrado)
+    $('lg-pv').textContent = Object.keys(S.pend).filter(i => !FSEC || sectorDe(LOTS[i].n[0]) === FSEC).length;
     $('lg-mk').textContent = Object.values(S.marcas).filter(m => M_CERR.indexOf(m.estado) < 0 && (!FSEC || m.sector === 'Sector ' + FSEC)).length;
     const n = Object.values(S.hallazgos).filter(h => abierta(h) && h.revision && h.revision <= hoy()).length;
     $('nAgenda').hidden = !n; $('nAgenda').textContent = n;
@@ -330,6 +333,7 @@ function pintarPanel() {
   const scroll = p.scrollTop;
   p.innerHTML = `<div class="panel-h"><div><h2>U.F. ${esc(ufs.join(' / '))}</h2><div class="sub">Sector ${esc(sectorDe(ufs[0]))}${ufs.length > 1 ? ' · lote unificado' : ''}${posVigente() ? ' · a ' + metrosA(SEL, POS) + ' m de vos' : ''}</div></div><button type="button" class="x" id="pClose" aria-label="Cerrar ficha">×</button></div>
   <div class="panel-b">
+    ${S.pend[SEL] ? `<p class="gpsinfo lejos">Pendiente de visita: quedó sin visitar en el recorrido del ${fmt(String(S.pend[SEL].desde).slice(0, 10))} (${esc(S.pend[SEL].usuario)}). Se resuelve al cargar una visita.</p>` : ''}
     ${puede('inspector') ? '<div class="row"><button type="button" class="pri" id="pNueva">Nueva visita</button></div>' : '<p class="note">Usuario de consulta: solo lectura.</p>'}
     <section class="list"><h3>Faltas abiertas (${ab.length})</h3>${ab.length ? ab.map(item).join('') : '<p class="empty">Sin faltas abiertas.</p>'}</section>
     <section class="list"><h3>Visitas (${vs.length})</h3>${vs.length ? vs.slice(0, 15).map(v => `<div class="item"><span class="top"><span class="cod">${esc(v.n)} · ${fmt(v.fecha)}</span><span class="pill n">${esc(v.origen)}</span></span><span class="meta">${esc(v.contacto || 'Sin contacto registrado')}${v.obs ? ' · ' + esc(v.obs) : ''}</span><span class="meta">${quien(v.autor)}${v.lat != null ? ` · GPS ±${v.prec || '?'} m` : ''}</span>${fotosDe('', v.n)}</div>`).join('') : '<p class="empty">Todavía no hay visitas a esta U.F.</p>'}</section>
@@ -1013,6 +1017,10 @@ const nombreP = p => p.tipo === 'uf' ? 'U.F. ' + p.ref : p.ref + (S.marcas[p.ref
 /* armado del recorrido: las U.F. se eligen solo tocando los lotes en el plano */
 function planificar(limpiar) {
   if (limpiar) PLAN.lotes = new Set();
+  if (!PLAN.lotes.size && !PLAN.sembrado) {          // arranca con las U.F. que quedaron pendientes de visita
+    Object.keys(S.pend).forEach(i => PLAN.lotes.add(+i)); PLAN.sembrado = true;
+    if (PLAN.lotes.size) toast(`Se agregaron ${PLAN.lotes.size} U.F. pendientes de visita. Tocalas para quitarlas.`);
+  }
   cerrarModal(); ocultarTip();
   PREVIA = null; gRuta.innerHTML = '';
   ELEG = PLAN.lotes;
@@ -1117,7 +1125,7 @@ function barraRuta() {
     $('itCambiar').onclick = () => planificar();
     $('itDescartar').onclick = () => { PREVIA = null; PLAN.lotes = new Set(); gRuta.innerHTML = ''; if (ITIN) { pintarRuta(); barraRuta(); } else b.hidden = true; };
     $('itGuardar').onclick = async () => {
-      try { busy('Guardando…'); ITIN = await api('/itinerarios', {method: 'POST', json: PREVIA.pedido}); busy(''); PREVIA = null; PLAN.lotes = new Set(); toast('Recorrido guardado. ¡Buen recorrido!'); pintarRuta(); barraRuta(); }
+      try { busy('Guardando…'); ITIN = await api('/itinerarios', {method: 'POST', json: PREVIA.pedido}); busy(''); seguirRecorrido(); PREVIA = null; PLAN.lotes = new Set(); PLAN.sembrado = false; toast('Recorrido guardado. ¡Buen recorrido!'); pintarRuta(); barraRuta(); }
       catch (e) { busy(''); error(e); }
     };
     return;
@@ -1128,7 +1136,7 @@ function barraRuta() {
   b.hidden = false;
   b.innerHTML = `<div class="row"><b>Recorrido de hoy</b><span class="note">${hechas} de ${ps.length} hechas${ITIN.salteadas ? ' · ' + ITIN.salteadas + ' salteada' + (ITIN.salteadas > 1 ? 's' : '') : ''}</span></div>
     <div class="it-prog"><i style="width:${Math.round(100 * hechas / Math.max(ps.length, 1))}%"></i></div>
-    <p class="note">${sig ? `Próxima: <b>${esc(nombreP(sig))}</b>${dist != null ? ' · a unos ' + dist + ' m en línea recta' : ''}` : '¡Listo! No quedan paradas pendientes.'}</p>
+    <p class="note">${watchId != null ? '📍 Siguiendo tu ubicación' + (BLOQUEO ? ' · pantalla encendida' : '') + ' · ' : ''}${sig ? `Próxima: <b>${esc(nombreP(sig))}</b>${dist != null ? ' · a unos ' + dist + ' m en línea recta' : ''}` : '¡Listo! No quedan paradas pendientes.'}</p>
     <div class="row"><button type="button" id="itLista">Lista</button>${sig ? '<button type="button" id="itIr">Ir a la próxima</button><button type="button" id="itGmaps">Google Maps</button>' : ''}<button type="button" id="itMin" title="Ocultar">▾</button></div>`;
   $('itLista').onclick = () => listaRecorrido();
   if ($('itIr')) $('itIr').onclick = () => irParada(sig);
@@ -1176,7 +1184,7 @@ function listaRecorrido(ps, piernas, activo = true) {
   modal(activo ? 'Recorrido de hoy' : 'Orden propuesto', `
     <p class="note">${r.modo === 'pie' ? '🚶 A pie' : '🚗 En vehículo'} · salida: ${esc(r.inicio.nombre || 'Inicio')} · ${kmTxt(activo ? +ITIN.km_plan : PREVIA.km)} · ${minTxt(activo ? ITIN.minutos_plan : PREVIA.minutos)}${r.volver ? ' · vuelve al punto de salida' : ''}</p>
     <ol class="it-orden">${ps.map((p, k) => `<li class="${p.estado || ''}"><span class="it-num">${k + 1}</span><span class="it-txt"><b>${esc(nombreP(p))}</b>
-      <small>${kmDe(p, k) ? kmTxt(kmDe(p, k)) + ' desde la anterior' : ''}${p.fijada ? ' · 📌 fijada' : ''}${p.estado === 'hecha' && p.marcada ? ' · hecha ' + String(p.marcada).slice(11, 16) : ''}</small></span>${icono(p)}
+      <small>${kmDe(p, k) ? kmTxt(kmDe(p, k)) + ' desde la anterior' : ''}${p.fijada ? ' · 📌 fijada' : ''}${p.estado === 'hecha' && p.marcada ? ' · hecha ' + String(p.marcada).slice(11, 16) : ''}${p.llegada ? ' · llegada GPS ' + String(p.llegada).slice(11, 16) + (p.llegada_m != null ? ' (' + p.llegada_m + ' m)' : '') : ''}${p.estado === 'no_visitada' ? ' · no visitada' : ''}</small></span>${icono(p)}
       <span class="acc">${activo && p.estado === 'pendiente' ? `<button type="button" data-ir="${k}">Ir</button><button type="button" data-sk="${k}">Saltear</button>` : ''}${activo && p.estado === 'salteada' ? `<button type="button" data-re="${k}">Retomar</button>` : ''}${activo && p.estado === 'pendiente' ? `<button type="button" data-ok="${k}" title="Marcar como hecha sin cargar visita">✓</button>` : ''}</span></li>`).join('')}</ol>
     ${activo ? '<p class="note">Al cargar una visita en una U.F. del recorrido (o un cambio en una novedad), la parada se tacha sola.</p>' : ''}
   `, activo ? `<button type="button" class="danger" id="itFin">Terminar recorrido</button><button type="button" id="itNuevo">Planificar de nuevo</button><button type="button" class="pri" id="itRec">Recalcular lo que falta</button>`
@@ -1200,9 +1208,61 @@ function listaRecorrido(ps, piernas, activo = true) {
   };
   $('itNuevo').onclick = () => planificar(true);
   $('itFin').onclick = async () => {
-    try { busy('Cerrando…'); await api(`/itinerarios/${ITIN.id_itinerario}/terminar`, {method: 'POST', json: {}}); busy(''); ITIN = null; gRuta.innerHTML = ''; cerrarModal(); barraRuta(); toast('Recorrido terminado'); }
+    try { busy('Cerrando…'); await api(`/itinerarios/${ITIN.id_itinerario}/terminar`, {method: 'POST', json: {}}); busy(''); ITIN = null; gRuta.innerHTML = ''; cerrarModal(); barraRuta(); pantallaEncendida(false); await cargar(); toast('Recorrido terminado. Lo que no se visitó queda como "Pendiente de visita".'); }
     catch (e) { busy(''); error(e); }
   };
+}
+/* llegada a una parada: GPS dentro de 40 m durante 20 s → vibra y pregunta qué se hizo */
+const RADIO_LLEGADA = 40, PERMANENCIA_MS = 20000, PREC_MAX = 50;
+const DENTRO = {}, AVISADAS = new Set();
+function vigilarLlegada() {
+  const g = posVigente(); if (!g || g.acc > PREC_MAX || !ITIN) return;
+  const ahora = Date.now();
+  ITIN.paradas.forEach(p => {
+    const k = ITIN.id_itinerario + ':' + p.orden;
+    if (p.estado !== 'pendiente' || AVISADAS.has(k)) return;
+    const d = Math.hypot(g.x - p.x, g.y - p.y) * M_POR_UNIDAD;
+    if (d > RADIO_LLEGADA) { delete DENTRO[k]; return; }
+    if (!DENTRO[k]) { DENTRO[k] = ahora; return; }
+    if (ahora - DENTRO[k] >= PERMANENCIA_MS && $('modal').hidden && !MAPA_MODO && !DIB) { AVISADAS.add(k); avisarLlegada(p, Math.round(d), g.acc); }
+  });
+}
+async function avisarLlegada(p, dist, prec) {
+  try { navigator.vibrate && navigator.vibrate([250, 120, 250]); } catch (e) {}
+  try { ITIN = await api(`/itinerarios/${ITIN.id_itinerario}/paradas/${p.orden}/llegada`, {method: 'POST', json: {dist_m: dist, prec}}); pintarRuta(); barraRuta(); } catch (e) {}
+  const uf = +String(p.ref).split('/')[0], i = ufLot[uf];
+  modal('Llegaste a la ' + nombreP(p), `
+    <p class="ftxt">Estás a unos ${dist} m (GPS ±${prec} m). ¿Qué hiciste en esta parada?</p>
+    <p class="note">La llegada queda registrada como constancia. La parada se cumple al cargar la visita o marcar "Sin novedad".</p>
+  `, '<button type="button" id="llSaltar">Saltear</button><button type="button" id="llSin">Sin novedad</button><button type="button" class="pri" id="llVisita">Cargar visita</button>');
+  $('llVisita').onclick = () => { cerrarModal(); if (i != null) { seguir = false; marcarGps(); seleccionar(i); irA(i); } formVisita(uf); };
+  $('llSin').onclick = async () => {
+    try {
+      busy('Guardando…');
+      const fd = new FormData();
+      fd.append('datos', JSON.stringify(Object.assign({uf, fecha: hoy(), origen: 'Recorrido de inspección', obs: 'Sin novedad (recorrido del día, llegada verificada por GPS)', faltas: []}, gpsDatos())));
+      await api('/visitas', {method: 'POST', form: fd});
+      busy(''); cerrarModal(); toast(nombreP(p) + ': sin novedad'); await cargar();
+    } catch (e) { busy(''); error(e); }
+  };
+  $('llSaltar').onclick = async () => {
+    try { busy('Guardando…'); ITIN = await api(`/itinerarios/${ITIN.id_itinerario}/paradas/${p.orden}`, {method: 'POST', json: {estado: 'salteada'}}); busy(''); cerrarModal(); pintarRuta(); barraRuta(); }
+    catch (e) { busy(''); error(e); }
+  };
+}
+/* pantalla encendida mientras hay un recorrido activo (si el teléfono se bloquea, el navegador deja de seguir el GPS) */
+let BLOQUEO = null;
+async function pantallaEncendida(on) {
+  try {
+    if (on && !BLOQUEO && 'wakeLock' in navigator && document.visibilityState === 'visible') { BLOQUEO = await navigator.wakeLock.request('screen'); BLOQUEO.addEventListener('release', () => { BLOQUEO = null; }); }
+    if (!on && BLOQUEO) { await BLOQUEO.release(); BLOQUEO = null; }
+  } catch (e) { BLOQUEO = null; }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && ITIN) { pantallaEncendida(true); vigilarLlegada(); } });
+function seguirRecorrido() {
+  if (!ITIN) { pantallaEncendida(false); return; }
+  if ('geolocation' in navigator && window.isSecureContext) iniciarGps(false, true);
+  pantallaEncendida(true);
 }
 async function cargarRecorrido() {
   if (!puede('inspector')) return;
@@ -1211,6 +1271,7 @@ async function cargarRecorrido() {
     ITIN = await api('/itinerarios/actual');
   } catch (e) { return; }
   if (!MAPA_MODO) { pintarRuta(); barraRuta(); }
+  seguirRecorrido();
 }
 $('bItin').onclick = () => {
   $('bItin').classList.remove('on');
@@ -1547,6 +1608,7 @@ async function cargar() {
   S.cat = {}; d.catalogo.forEach(c => { c.activo = !!c.activo; S.cat[c.codigo] = c; });
   S.usuarios = {}; d.usuarios.forEach(u => { S.usuarios[u.id] = u; });
   S.marcas = {}; (d.marcas || []).forEach(m => { S.marcas[m.n] = m; });
+  S.pend = {}; (d.pendientes_visita || []).forEach(p => { const i = ufLot[p.ufs[0]]; if (i != null && !S.pend[i]) S.pend[i] = p; });
   GRUPOS = {}; d.grupos.forEach(g => { GRUPOS[g.uf] = String(g.ufs).split(',').map(Number); });
   const b = $('banner');
   if (!Object.values(S.cat).some(c => c.activo)) { b.hidden = false; b.textContent = 'No hay tipos de faltas cargados. Un administrador tiene que cargarlos en Tipos de faltas.'; }

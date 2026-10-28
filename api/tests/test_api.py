@@ -521,3 +521,32 @@ def test_ficha_pdf(usuarios):
     assert len(pdf.attachments) == 2
     assert TestClient(app).get(f"/api/faltas/{nf}/pdf").status_code == 401
     assert con.get("/api/faltas/F-99999/pdf").status_code == 404
+
+
+def test_llegada_y_pendientes_de_visita(usuarios):
+    import json
+    ins = cliente(usuarios["inspector"])
+    red = ins.get("/api/red").json()
+    calles = [t for t in red["tramos"] if t["tipo"] == "calle" and len(t["geo"]) > 2]
+    pts = [calles[k * len(calles) // 3]["geo"][1] for k in range(3)]
+    par = [{"tipo": "uf", "ref": str(2001 + k), "x": x, "y": y} for k, (x, y) in enumerate(pts)]
+    it = ins.post("/api/itinerarios", json={"modo": "vehiculo", "paradas": par}, headers=H).json()
+    iid, o1 = it["id_itinerario"], it["paradas"][0]["orden"]
+    it = ins.post(f"/api/itinerarios/{iid}/paradas/{o1}/llegada", json={"dist_m": 12, "prec": 8}, headers=H).json()
+    p1 = next(p for p in it["paradas"] if p["orden"] == o1)
+    assert p1["llegada"] and p1["llegada_m"] == 12 and p1["estado"] == "pendiente"     # llegar no es cumplir
+    # "Sin novedad" = una visita a esa U.F.: la parada se cumple sola
+    with conexion() as c:
+        f = str(fila(c, "SELECT CURDATE() d")["d"])
+    r = ins.post("/api/visitas", data={"datos": json.dumps({"uf": int(p1["ref"]), "fecha": f, "origen": "Recorrido de inspección", "obs": "Sin novedad", "faltas": []})}, headers=H)
+    assert r.status_code == 200, r.text
+    it = ins.post(f"/api/itinerarios/{iid}/terminar", json={}, headers=H).json()
+    est = {p["ref"]: p["estado"] for p in it["paradas"]}
+    assert est[p1["ref"]] == "hecha" and sorted(v for k, v in est.items() if k != p1["ref"]) == ["no_visitada", "no_visitada"]
+    pend = {p["ref"] for p in ins.get("/api/estado").json()["pendientes_visita"]}
+    otras = {k for k in est if k != p1["ref"]}
+    assert otras <= pend and p1["ref"] not in pend
+    # una visita posterior resuelve la pendiente
+    uf = sorted(otras)[0]
+    ins.post("/api/visitas", data={"datos": json.dumps({"uf": int(uf), "fecha": f, "origen": "Revisión de caso", "faltas": []})}, headers=H)
+    assert uf not in {p["ref"] for p in ins.get("/api/estado").json()["pendientes_visita"]}

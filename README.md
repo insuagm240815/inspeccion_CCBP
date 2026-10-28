@@ -238,6 +238,20 @@ El botón **Recorrido** lo usan el inspector, el supervisor y el admin.
    - Se puede **saltear**, **marcar como hecha** o **recalcular lo que falta** desde la ubicación actual.
    - El recorrido queda guardado: planificado contra realizado. El supervisor y el admin lo pueden consultar.
 
+**Llegada por GPS:** con un recorrido activo, la app sigue la ubicación del celular y mantiene la pantalla encendida. Si el navegador lo permite, la pantalla no se apaga; si el celular se bloquea, el navegador deja de seguir el GPS. Cuando el celular está a menos de 40 m de una parada durante 20 segundos (con GPS de ±50 m o mejor), vibra y muestra **"Llegaste a la U.F. …"** con tres opciones:
+- **Cargar visita:** abre el formulario de la visita.
+- **Sin novedad:** guarda una visita sin faltas con la ubicación GPS.
+- **Saltear.**
+
+La llegada queda registrada (hora y distancia) como constancia en la lista del recorrido. Llegar no cumple la parada: se cumple con la visita.
+
+**Pendiente de visita:** al **terminar el recorrido**, las paradas que no se visitaron quedan como "no visitadas". En el plano esos lotes se marcan con borde violeta punteado. Además:
+- la leyenda muestra **Pendiente de visita** con su cantidad;
+- la ficha de la U.F. avisa desde cuándo está pendiente;
+- el próximo **Armar recorrido** arranca con esas U.F. ya elegidas.
+
+La marca se borra sola cuando alguien carga una visita en esa U.F. Si un recorrido queda abierto de un día para otro, sus paradas pendientes también cuentan.
+
 **Google Maps:** el botón **Google Maps**, en la propuesta y durante el recorrido, abre las paradas en Google Maps en el orden calculado, en vehículo o a pie. Durante el recorrido manda solo las paradas pendientes, desde la ubicación del celular.
 - **Límite de paradas:** Google acepta hasta 3 paradas intermedias por enlace en el celular y 9 en la PC. Si hay más, la app ofrece el recorrido partido en tramos.
 - **Camino entre paradas:** lo arma Google y puede no conocer todas las calles internas ni las manos del country.

@@ -336,3 +336,6 @@ table.cat tr.imp-omitida td{opacity:.6}
 .ruta-m .ruta-p.sig{stroke:#111;stroke-width:3.5}
 .ruta-m .ruta-ini{fill:#222;stroke:#fff}
 .ruta-m .ruta-n{font:800 16px system-ui,sans-serif;fill:#fff;text-anchor:middle}
+:root{--pend:#7C3AED}
+.lot.pend-vis{stroke:var(--pend) !important;stroke-width:3 !important;stroke-dasharray:6 3;vector-effect:non-scaling-stroke;paint-order:stroke}
+.legend i.lg-pv{background:transparent;border:2px dashed var(--pend);box-sizing:border-box}
